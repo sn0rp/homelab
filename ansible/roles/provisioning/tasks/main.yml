@@ -241,3 +241,8 @@
   command: /home/sites/provisioning.snorp.dev/scripts/update-isos.sh dban
   args:
     creates: /var/www/html/tools/dban/dban.bzi
+
+- name: Download Proxmox netboot files
+  command: /home/sites/provisioning.snorp.dev/scripts/update-isos.sh proxmox
+  args:
+    creates: /var/www/html/netboot/proxmox/linux26
