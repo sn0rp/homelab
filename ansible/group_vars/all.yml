@@ -23,3 +23,8 @@ technitium_dns_records:
   - { name: "technitium",   type: A, value: "{{ technitium_ip }}" }
   - { name: "proxmox",      type: A, value: "{{ proxmox_ip }}" }
   - { name: "provisioning", type: A, value: "{{ provisioning_ip }}" }
+
+technitium_forwarders:
+  - https://cloudflare-dns.com/dns-query
+  - https://dns.quad9.net/dns-query
+  - https://dns.google/dns-query

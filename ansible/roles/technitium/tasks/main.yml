@@ -33,7 +33,7 @@
     body_format: form-urlencoded
     body:
       token: "{{ tech_token }}"
-      forwarders: "https://cloudflare-dns.com/dns-query"
+      forwarders: "{{ technitium_forwarders | join(',') }}"
       forwarderProtocol: Https
 
 - name: Configure blocking settings
