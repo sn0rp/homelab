@@ -1,0 +1,59 @@
+---
+- name: Write DNS upstream config directly (avoids GL.iNet UCI bug)
+  raw: |
+    cat > /tmp/dnsmasq.d/technitium.conf << 'EOF'
+    server=192.168.8.104
+    no-resolv
+    EOF
+
+- name: Write PXE dnsmasq config
+  raw: |
+    cat > /tmp/dnsmasq.d/pxe.conf << 'EOF'
+    dhcp-match=set:efi-x86_64,option:client-arch,7
+    dhcp-match=set:efi-x86_64,option:client-arch,9
+    dhcp-match=set:efi-x86,option:client-arch,6
+    dhcp-boot=tag:efi-x86_64,netboot.xyz.efi,,192.168.8.180
+    dhcp-boot=tag:efi-x86,netboot.xyz.efi,,192.168.8.180
+    dhcp-boot=tag:!efi-x86_64,tag:!efi-x86,netboot.xyz.kpxe,,192.168.8.180
+    EOF
+
+- name: Persist DNS and PXE config in rc.local
+  raw: |
+    sed -i '/# BEGIN ANSIBLE MANAGED - PXE boot config/,/# END ANSIBLE MANAGED - PXE boot config/d' /etc/rc.local
+    sed -i '/^exit 0/i # BEGIN ANSIBLE MANAGED - PXE boot config\
+    cat > /tmp/dnsmasq.d/technitium.conf << '"'"'DNSEOF'"'"'\
+    server=192.168.8.104\
+    no-resolv\
+    DNSEOF\
+    cat > /tmp/dnsmasq.d/pxe.conf << '"'"'PXEEOF'"'"'\
+    dhcp-match=set:efi-x86_64,option:client-arch,7\
+    dhcp-match=set:efi-x86_64,option:client-arch,9\
+    dhcp-match=set:efi-x86,option:client-arch,6\
+    dhcp-boot=tag:efi-x86_64,netboot.xyz.efi,,192.168.8.180\
+    dhcp-boot=tag:efi-x86,netboot.xyz.efi,,192.168.8.180\
+    dhcp-boot=tag:!efi-x86_64,tag:!efi-x86,netboot.xyz.kpxe,,192.168.8.180\
+    PXEEOF\
+    \/etc\/init.d\/dnsmasq restart\
+    # END ANSIBLE MANAGED - PXE boot config' /etc/rc.local
+
+- name: Restart dnsmasq
+  raw: /etc/init.d/dnsmasq restart
+
+- name: Manual step required - GL.iNet DNS bug workaround
+  debug:
+    msg: |
+      ============================================================
+      ACTION REQUIRED: GL.iNet firmware bug workaround
+      ============================================================
+      The dnsmasq restart may have corrupted the router web UI
+      DNS slots. You MUST verify and fix this manually:
+
+      1. Open http://192.168.8.1 in your browser
+      2. Navigate to the DNS page
+      3. Ensure DNS Server 1 is set to: 192.168.8.104
+      4. Clear DNS Server 2, 3, and 4 if they contain anything
+      5. Save
+
+      If DNS Server 1 already shows 192.168.8.104 correctly,
+      no action is needed.
+      ============================================================

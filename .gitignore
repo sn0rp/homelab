@@ -1,0 +1,7 @@
+terraform/.terraform.lock.hcl
+terraform/terraform.tfvars
+terraform/*.tfstate.backup
+terraform/.terraform/
+terraform/*.tfstate
+ansible/.vault_pass
+docs/

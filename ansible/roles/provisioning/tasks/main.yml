@@ -1,0 +1,243 @@
+---
+- name: Install dependencies
+  apt:
+    name:
+      - git
+      - rsync
+      - wget
+      - curl
+      - unzip
+      - p7zip-full
+      - tmux
+      - make
+      - gcc
+      - binutils
+      - liblzma-dev
+      - mtools
+      - perl
+    state: present
+    update_cache: yes
+
+- name: Create .ssh directory
+  file:
+    path: /root/.ssh
+    state: directory
+    mode: '0700'
+
+- name: Install deploy key
+  copy:
+    content: "{{ provisioning_deploy_key }}"
+    dest: /root/.ssh/provisioning_deploy
+    mode: '0600'
+
+- name: Configure SSH for GitHub
+  blockinfile:
+    path: /root/.ssh/config
+    create: yes
+    block: |
+      Host github.com
+          IdentityFile /root/.ssh/provisioning_deploy
+          StrictHostKeyChecking accept-new
+
+- name: Clone provisioning repo
+  git:
+    repo: git@github.com:sn0rp/provisioning.snorp.dev.git
+    dest: /home/sites/provisioning.snorp.dev
+    key_file: /root/.ssh/provisioning_deploy
+    accept_hostkey: yes
+    update: yes
+
+- name: Symlink boot.cfg
+  file:
+    src: /home/sites/provisioning.snorp.dev/boot/boot.cfg
+    dest: /var/www/html/boot.cfg
+    state: link
+    force: yes
+
+- name: Create provisioner directory
+  file:
+    path: /opt/provisioner
+    state: directory
+
+- name: Download provisioner binary
+  get_url:
+    url: https://github.com/sn0rp/provisioning.snorp.dev/releases/latest/download/provisioner-linux-amd64
+    dest: /opt/provisioner/provisioner
+    mode: '0755'
+    force: yes
+
+- name: Sync templates
+  synchronize:
+    src: /home/sites/provisioning.snorp.dev/templates/
+    dest: /opt/provisioner/templates/
+    delete: yes
+  delegate_to: "{{ inventory_hostname }}"
+
+- name: Install provisioner systemd service
+  copy:
+    dest: /etc/systemd/system/provisioner.service
+    content: |
+      [Unit]
+      Description=snorp homelab provisioner
+      After=network.target
+      [Service]
+      Type=simple
+      ExecStart=/opt/provisioner/provisioner
+      Restart=always
+      RestartSec=5
+      [Install]
+      WantedBy=multi-user.target
+  notify: Restart provisioner
+
+- name: Enable provisioner service
+  systemd:
+    name: provisioner
+    enabled: yes
+    state: started
+    daemon_reload: yes
+
+- name: Install deploy cron
+  copy:
+    dest: /etc/cron.d/provisioner-deploy
+    content: "0 4 * * * root /home/sites/provisioning.snorp.dev/scripts/deploy.sh\n"
+
+- name: Fix tftpd directory
+  copy:
+    dest: /etc/default/tftpd-hpa
+    content: |
+      TFTP_USERNAME="tftp"
+      TFTP_DIRECTORY="/var/www/html"
+      TFTP_ADDRESS="0.0.0.0:69"
+      TFTP_OPTIONS="--secure"
+  notify: Restart tftpd
+
+- name: Configure nginx
+  copy:
+    dest: /etc/nginx/sites-available/netboot-xyz
+    content: |
+      server {
+          listen 80 default_server;
+          listen [::]:80 default_server;
+          root /var/www/html;
+          server_name _;
+          location / {
+              autoindex on;
+              add_header Access-Control-Allow-Origin "*";
+          }
+          location /config/ {
+              proxy_pass http://127.0.0.1:8080;
+              proxy_set_header Host $host;
+              proxy_set_header X-Real-IP $remote_addr;
+          }
+      }
+  notify: Reload nginx
+
+- name: Clone iPXE source
+  git:
+    repo: https://github.com/ipxe/ipxe.git
+    dest: /opt/ipxe
+    depth: 1
+    update: no
+
+- name: Check if iPXE bootloaders exist
+  stat:
+    path: /var/www/html/netboot.xyz.kpxe
+  register: kpxe_stat
+
+- name: Check current boot.ipxe hash
+  stat:
+    path: /opt/.boot_ipxe.sha256
+  register: hash_stat
+
+- name: Get boot.ipxe sha256
+  stat:
+    path: /home/sites/provisioning.snorp.dev/boot/boot.ipxe
+    get_checksum: yes
+    checksum_algorithm: sha256
+  register: ipxe_script_stat
+
+- name: Read stored hash
+  slurp:
+    src: /opt/.boot_ipxe.sha256
+  register: stored_hash
+  when: hash_stat.stat.exists
+
+- name: Set needs_rebuild fact
+  set_fact:
+    needs_rebuild: >-
+      {{ not kpxe_stat.stat.exists or
+         not hash_stat.stat.exists or
+         (hash_stat.stat.exists and
+          (stored_hash.content | b64decode | trim) != ipxe_script_stat.stat.checksum) }}
+
+- name: Build iPXE BIOS bootloader
+  make:
+    chdir: /opt/ipxe/src
+    target: bin/undionly.kpxe
+    params:
+      EMBED: /home/sites/provisioning.snorp.dev/boot/boot.ipxe
+  when: needs_rebuild
+
+- name: Build iPXE UEFI bootloader
+  make:
+    chdir: /opt/ipxe/src
+    target: bin-x86_64-efi/ipxe.efi
+    params:
+      EMBED: /home/sites/provisioning.snorp.dev/boot/boot.ipxe
+  when: needs_rebuild
+
+- name: Deploy bootloaders
+  copy:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    remote_src: yes
+  loop:
+    - { src: /opt/ipxe/src/bin/undionly.kpxe,        dest: /var/www/html/netboot.xyz.kpxe }
+    - { src: /opt/ipxe/src/bin-x86_64-efi/ipxe.efi,  dest: /var/www/html/netboot.xyz.efi }
+  when: needs_rebuild
+
+- name: Store boot.ipxe hash
+  copy:
+    content: "{{ ipxe_script_stat.stat.checksum }}"
+    dest: /opt/.boot_ipxe.sha256
+  when: needs_rebuild
+
+- name: Download Debian netboot files
+  command: /home/sites/provisioning.snorp.dev/scripts/update-isos.sh debian
+  args:
+    creates: /var/www/html/netboot/debian/linux
+
+- name: Download Alpine netboot files
+  command: /home/sites/provisioning.snorp.dev/scripts/update-isos.sh alpine
+  args:
+    creates: /var/www/html/netboot/alpine/vmlinuz
+
+- name: Download Kali netboot files
+  command: /home/sites/provisioning.snorp.dev/scripts/update-isos.sh kali
+  args:
+    creates: /var/www/html/netboot/kali/linux
+
+- name: Download Ubuntu ISO and extract netboot
+  command: /home/sites/provisioning.snorp.dev/scripts/update-isos.sh ubuntu
+  args:
+    creates: /var/www/html/netboot/ubuntu/linux
+
+- name: Download Trisquel ISO and extract netboot
+  command: /home/sites/provisioning.snorp.dev/scripts/update-isos.sh trisquel
+  args:
+    creates: /var/www/html/netboot/trisquel/linux
+
+- name: Download PureOS ISO and extract netboot
+  command: /home/sites/provisioning.snorp.dev/scripts/update-isos.sh pureos
+  args:
+    creates: /var/www/html/netboot/pureos/linux
+
+- name: Download AmogOS ISO and extract netboot
+  command: /home/sites/provisioning.snorp.dev/scripts/update-isos.sh amogos
+  args:
+    creates: /var/www/html/netboot/amogos/linux
+
+- name: Extract DBAN kernel
+  command: /home/sites/provisioning.snorp.dev/scripts/update-isos.sh dban
+  args:
+    creates: /var/www/html/tools/dban/dban.bzi

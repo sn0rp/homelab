@@ -1,0 +1,33 @@
+# ansible/inventory.yml
+all:
+  children:
+    vps_hosts:
+      hosts:
+        jobert:
+          ansible_host: 216.128.143.17
+          ansible_user: root
+
+    proxmox_hosts:
+      hosts:
+        proxmox:
+          ansible_host: 192.168.8.187
+          ansible_user: root
+
+    lxc_hosts:
+      hosts:
+        technitium:
+          ansible_host: 192.168.8.104
+          ansible_user: root
+          lxc_id: 100
+        provisioning:
+          ansible_host: 192.168.8.180
+          ansible_user: root
+          lxc_id: 101
+
+    router_hosts:
+      hosts:
+        router:
+          ansible_host: 192.168.8.1
+          ansible_user: root
+          ansible_python_interpreter: /bin/false
+          ansible_gather_facts: false

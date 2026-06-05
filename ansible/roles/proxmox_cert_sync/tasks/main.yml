@@ -1,0 +1,109 @@
+---
+- name: Ensure cert directory exists
+  file:
+    path: "{{ proxmox_cert_dir }}"
+    state: directory
+
+- name: Ensure /etc/technitium exists in LXC
+  command: pct exec {{ technitium_lxc_id }} -- mkdir -p /etc/technitium
+  changed_when: false
+
+- name: Pull fullchain.pem from VPS
+  fetch:
+    src: "{{ certbot_cert_dir }}/fullchain.pem"
+    dest: /tmp/homelab_fullchain.pem
+    flat: yes
+  delegate_to: jobert
+
+- name: Pull privkey.pem from VPS
+  fetch:
+    src: "{{ certbot_cert_dir }}/privkey.pem"
+    dest: /tmp/homelab_privkey.pem
+    flat: yes
+  delegate_to: jobert
+
+- name: Stage fullchain.pem in /tmp
+  copy:
+    src: /tmp/homelab_fullchain.pem
+    dest: /tmp/pve_fullchain.pem
+
+- name: Stage privkey.pem in /tmp
+  copy:
+    src: /tmp/homelab_privkey.pem
+    dest: /tmp/pve_privkey.pem
+
+- name: Move certs into pve local dir (avoids pmxcfs chmod restriction)
+  command: "{{ item }}"
+  loop:
+    - cp /tmp/pve_fullchain.pem {{ proxmox_cert_dir }}/fullchain.pem
+    - cp /tmp/pve_privkey.pem {{ proxmox_cert_dir }}/privkey.pem
+    - rm /tmp/pve_fullchain.pem /tmp/pve_privkey.pem
+  changed_when: true
+
+- name: Convert PEM to PKCS12 pfx
+  command: >
+    openssl pkcs12 -export
+    -out /tmp/technitium.pfx
+    -inkey {{ proxmox_cert_dir }}/privkey.pem
+    -in {{ proxmox_cert_dir }}/fullchain.pem
+    -passout pass:
+  changed_when: true
+
+- name: Push pfx into Technitium LXC
+  command: pct push {{ technitium_lxc_id }} /tmp/technitium.pfx {{ technitium_pfx_path }}
+  changed_when: true
+
+- name: Restart Technitium to load new cert
+  command: pct exec {{ technitium_lxc_id }} -- systemctl restart technitium
+  changed_when: true
+
+- name: Install wildcard cert for Proxmox web UI
+  command: "{{ item }}"
+  loop:
+    - cp {{ proxmox_cert_dir }}/fullchain.pem /etc/pve/local/pve-ssl.pem
+    - cp {{ proxmox_cert_dir }}/privkey.pem /etc/pve/local/pve-ssl.key
+  changed_when: true
+  notify: Restart pveproxy
+
+- name: Install cert-sync systemd service
+  copy:
+    dest: /etc/systemd/system/cert-sync.service
+    content: |
+      [Unit]
+      Description=Pull TLS cert from VPS and push to Technitium LXC
+      [Service]
+      Type=oneshot
+      ExecStart=/bin/bash -c '\
+        scp root@{{ vps_ip }}:{{ certbot_cert_dir }}/fullchain.pem {{ proxmox_cert_dir }}/ && \
+        scp root@{{ vps_ip }}:{{ certbot_cert_dir }}/privkey.pem {{ proxmox_cert_dir }}/ && \
+        openssl pkcs12 -export \
+          -out /tmp/technitium.pfx \
+          -inkey {{ proxmox_cert_dir }}/privkey.pem \
+          -in {{ proxmox_cert_dir }}/fullchain.pem \
+          -passout pass: && \
+        pct push {{ technitium_lxc_id }} /tmp/technitium.pfx {{ technitium_pfx_path }} && \
+        pct exec {{ technitium_lxc_id }} -- systemctl restart technitium && \
+        cp {{ proxmox_cert_dir }}/fullchain.pem /etc/pve/local/pve-ssl.pem && \
+        cp {{ proxmox_cert_dir }}/privkey.pem /etc/pve/local/pve-ssl.key && \
+        systemctl restart pveproxy'
+  notify: Reload systemd
+
+- name: Install cert-sync systemd timer
+  copy:
+    dest: /etc/systemd/system/cert-sync.timer
+    content: |
+      [Unit]
+      Description=Daily cert sync from VPS
+      [Timer]
+      OnCalendar=daily
+      Persistent=true
+      [Install]
+      WantedBy=timers.target
+  notify: Reload systemd
+
+- name: Enable cert-sync timer
+  systemd:
+    name: cert-sync.timer
+    enabled: yes
+    state: started
+    daemon_reload: yes

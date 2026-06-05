@@ -1,0 +1,37 @@
+---
+- name: Install certbot and Cloudflare DNS plugin
+  apt:
+    name:
+      - certbot
+      - python3-certbot-dns-cloudflare
+    state: present
+    update_cache: yes
+
+- name: Check if Cloudflare credentials file exists
+  stat:
+    path: "{{ cloudflare_ini_path }}"
+  register: cf_ini
+
+- name: Fail if Cloudflare credentials file is missing
+  fail:
+    msg: >
+      Cloudflare API token file not found at {{ cloudflare_ini_path }}.
+      Create it manually: echo 'dns_cloudflare_api_token = TOKEN' > {{ cloudflare_ini_path }} && chmod 600 {{ cloudflare_ini_path }}
+  when: not cf_ini.stat.exists
+
+- name: Check existing certificates
+  command: certbot certificates
+  register: certbot_output
+  changed_when: false
+
+- name: Obtain wildcard cert if not already present
+  command: >
+    certbot certonly
+    --dns-cloudflare
+    --dns-cloudflare-credentials {{ cloudflare_ini_path }}
+    --non-interactive
+    --agree-tos
+    --email hostadmin@{{ base_domain }}
+    -d "{{ base_domain }}"
+    -d "*.{{ base_domain }}"
+  when: '"*." + base_domain not in certbot_output.stdout'

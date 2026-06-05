@@ -1,0 +1,16 @@
+---
+- name: Restart provisioner
+  systemd:
+    name: provisioner
+    state: restarted
+    daemon_reload: yes
+
+- name: Reload nginx
+  systemd:
+    name: nginx
+    state: reloaded
+
+- name: Restart tftpd
+  systemd:
+    name: tftpd-hpa
+    state: restarted

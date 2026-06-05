@@ -1,0 +1,99 @@
+---
+- name: Wait for Technitium to be reachable
+  uri:
+    url: "http://{{ ansible_host }}:5380/api/user/login"
+    method: GET
+    status_code: [200, 400]
+  register: result
+  until: result.status in [200, 400]
+  retries: 12
+  delay: 10
+
+- name: Get API token
+  uri:
+    url: "http://{{ ansible_host }}:5380/api/user/login"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      user: admin
+      pass: "{{ technitium_admin_password }}"
+      includeInfo: "false"
+  register: login
+  no_log: false #temporary
+
+- name: Set API token fact
+  set_fact:
+    tech_token: "{{ login.json.token }}"
+  no_log: true
+
+- name: Set Cloudflare DoH forwarder
+  uri:
+    url: "http://{{ ansible_host }}:5380/api/settings/set"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      token: "{{ tech_token }}"
+      forwarders: "https://cloudflare-dns.com/dns-query"
+      forwarderProtocol: Https
+
+- name: Configure blocking settings
+  uri:
+    url: "http://{{ ansible_host }}:5380/api/settings/set"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      token: "{{ tech_token }}"
+      enableBlocking: "true"
+      blockingType: NxDomain
+      blockListUrls: "https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts\nhttps://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/wildcard/multi-onlydomains.txt"
+      blockListUpdateIntervalHours: "24"
+
+- name: Create snorp.dev primary zone
+  uri:
+    url: "http://{{ ansible_host }}:5380/api/zones/create"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      token: "{{ tech_token }}"
+      zone: "{{ base_domain }}"
+      type: Primary
+  register: zone_result
+  failed_when:
+    - zone_result.status != 200
+    - '"already exists" not in (zone_result.json.errorMessage | default(""))'
+
+- name: Add DNS A records
+  uri:
+    url: "http://{{ ansible_host }}:5380/api/zones/records/add"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      token: "{{ tech_token }}"
+      zone: "{{ base_domain }}"
+      domain: "{{ item.name }}.{{ base_domain }}"
+      type: "{{ item.type }}"
+      ipAddress: "{{ item.value }}"
+      ttl: "3600"
+      overwrite: "true"
+  loop: "{{ technitium_dns_records }}"
+
+- name: Enable HTTPS on Technitium
+  uri:
+    url: "http://{{ ansible_host }}:5380/api/settings/set"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      token: "{{ tech_token }}"
+      webServiceEnableTls: "true"
+      webServiceHttpsPort: "53443"
+      webServiceTlsCertificatePath: "{{ technitium_pfx_path }}"
+      webServiceTlsCertificatePassword: ""
+
+- name: Enable DoH
+  uri:
+    url: "http://{{ ansible_host }}:5380/api/settings/set"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      token: "{{ tech_token }}"
+      enableDnsOverHttp: "true"

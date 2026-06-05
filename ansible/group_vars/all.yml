@@ -1,0 +1,25 @@
+---
+# Domain and network
+base_domain: snorp.dev
+vps_ip: 216.128.143.17
+technitium_ip: 192.168.8.104
+proxmox_ip: 192.168.8.187
+provisioning_ip: 192.168.8.180
+technitium_lxc_id: 100
+provisioning_lxc_id: 101
+
+# Cert paths
+certbot_cert_name: snorp.dev-0001
+certbot_cert_dir: "/etc/letsencrypt/live/{{ certbot_cert_name }}"
+cloudflare_ini_path: /root/.cloudflare.ini
+proxmox_cert_dir: /etc/pve/local/certs
+technitium_pfx_path: /etc/technitium/technitium.pfx
+
+# Technitium
+technitium_dns_records:
+  - { name: "@",            type: A, value: "{{ vps_ip }}" }
+  - { name: "www",          type: A, value: "{{ vps_ip }}" }
+  - { name: "*",            type: A, value: "{{ vps_ip }}" }
+  - { name: "technitium",   type: A, value: "{{ technitium_ip }}" }
+  - { name: "proxmox",      type: A, value: "{{ proxmox_ip }}" }
+  - { name: "provisioning", type: A, value: "{{ provisioning_ip }}" }

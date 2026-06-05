@@ -1,0 +1,40 @@
+# ansible/site.yml
+---
+- name: VPS - wildcard cert
+  hosts: vps_hosts
+  vars_files:
+    - vault.yml
+  roles:
+    - role: vps_cert
+      tags: cert, vps
+
+- name: Proxmox host - cert sync
+  hosts: proxmox_hosts
+  vars_files:
+    - vault.yml
+  roles:
+    - role: proxmox_cert_sync
+      tags: cert, proxmox
+
+- name: Technitium LXC
+  hosts: technitium
+  vars_files:
+  - vault.yml
+  roles:
+    - role: technitium
+      tags: technitium
+
+- name: Provisioning LXC
+  hosts: provisioning
+  vars_files:
+  - vault.yml
+  roles:
+    - role: provisioning
+      tags: provisioning
+
+- name: Router
+  hosts: router_hosts
+  gather_facts: false
+  roles:
+    - role: router
+      tags: router
