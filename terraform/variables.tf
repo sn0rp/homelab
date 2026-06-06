@@ -24,3 +24,8 @@ variable "provisioning_root_password" {
   description = "Root password for Provisioning LXC"
   sensitive   = true
 }
+
+variable "searxng_root_password" {
+  description = "Root password for SearXNG LXC"
+  sensitive   = true
+}

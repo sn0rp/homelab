@@ -38,3 +38,12 @@
   roles:
     - role: router
       tags: router
+
+- name: SearXNG
+  hosts: searxng
+  gather_facts: true
+  vars_files:
+    - vault.yml
+  roles:
+    - role: searxng
+      tags: searxng

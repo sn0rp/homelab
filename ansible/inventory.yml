@@ -23,6 +23,10 @@ all:
           ansible_host: 192.168.8.180
           ansible_user: root
           lxc_id: 101
+        searxng:
+          ansible_host: 192.168.8.139
+          ansible_user: root
+          lxc_id: 102
 
     router_hosts:
       hosts:

@@ -1,0 +1,118 @@
+---
+- name: Wait for SearXNG to be reachable
+  uri:
+    url: "http://{{ ansible_host }}:8888/"
+    status_code: 200
+  register: result
+  until: result.status == 200
+  retries: 12
+  delay: 10
+
+- name: Find SearXNG settings.yml
+  find:
+    paths:
+      - /etc/searxng
+      - /usr/local/searxng
+      - /opt/searxng
+    patterns: "settings.yml"
+    recurse: yes
+  register: settings_file
+
+- name: Fail if settings.yml not found
+  fail:
+    msg: "Could not find SearXNG settings.yml - check installation path"
+  when: settings_file.files | length == 0
+
+- name: Set settings path fact
+  set_fact:
+    searxng_settings: "{{ settings_file.files[0].path }}"
+
+- name: Set secret key
+  lineinfile:
+    path: "{{ searxng_settings }}"
+    regexp: "^  secret_key:"
+    line: "  secret_key: '{{ searxng_secret_key }}'"
+  notify: Restart SearXNG
+
+- name: Enable JSON output format for API access
+  replace:
+    path: "{{ searxng_settings }}"
+    regexp: "formats:(\n.*)+?(?=\n\\S)"
+    replace: "formats:\n    - html\n    - json\n"
+  notify: Restart SearXNG
+
+- name: Ensure SearXNG is enabled and started
+  systemd:
+    name: searxng
+    enabled: yes
+    state: started
+
+- name: Install nginx
+  apt:
+    name: nginx
+    state: present
+
+- name: Configure nginx reverse proxy for SearXNG
+  copy:
+    dest: /etc/nginx/sites-available/searxng
+    content: |
+      server {
+          listen 80 default_server;
+          server_name searx.snorp.dev;
+          location / {
+              proxy_pass http://127.0.0.1:8888;
+              proxy_set_header Host $host;
+              proxy_set_header X-Real-IP $remote_addr;
+              proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+          }
+      }
+  notify: Reload nginx
+
+- name: Enable nginx site
+  file:
+    src: /etc/nginx/sites-available/searxng
+    dest: /etc/nginx/sites-enabled/searxng
+    state: link
+  notify: Reload nginx
+
+- name: Remove nginx default site
+  file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+  notify: Reload nginx
+
+- name: Create cert directory
+  file:
+    path: /etc/nginx/certs
+    state: directory
+
+- name: Copy wildcard cert to SearXNG LXC
+  command: "{{ item }}"
+  loop:
+    - pct push 102 /etc/pve/local/certs/fullchain.pem /etc/nginx/certs/fullchain.pem
+    - pct push 102 /etc/pve/local/certs/privkey.pem /etc/nginx/certs/privkey.pem
+  delegate_to: proxmox
+
+- name: Configure nginx with HTTPS
+  copy:
+    dest: /etc/nginx/sites-available/searxng
+    content: |
+      server {
+          listen 80 default_server;
+          server_name searx.snorp.dev;
+          return 301 https://$host$request_uri;
+      }
+      server {
+          listen 443 ssl default_server;
+          server_name searx.snorp.dev;
+          ssl_certificate /etc/nginx/certs/fullchain.pem;
+          ssl_certificate_key /etc/nginx/certs/privkey.pem;
+          location / {
+              proxy_pass http://127.0.0.1:8888;
+              proxy_set_header Host $host;
+              proxy_set_header X-Real-IP $remote_addr;
+              proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+              proxy_set_header X-Forwarded-Proto $scheme;
+          }
+      }
+  notify: Reload nginx

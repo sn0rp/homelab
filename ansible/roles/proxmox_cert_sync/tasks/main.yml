@@ -57,6 +57,15 @@
   command: pct exec {{ technitium_lxc_id }} -- systemctl restart technitium
   changed_when: true
 
+- name: Push cert to SearXNG LXC
+  command: "{{ item }}"
+  loop:
+    - pct exec 102 -- mkdir -p /etc/nginx/certs
+    - pct push 102 {{ proxmox_cert_dir }}/fullchain.pem /etc/nginx/certs/fullchain.pem
+    - pct push 102 {{ proxmox_cert_dir }}/privkey.pem /etc/nginx/certs/privkey.pem
+    - pct exec 102 -- systemctl reload nginx
+  changed_when: true
+
 - name: Install wildcard cert for Proxmox web UI
   command: "{{ item }}"
   loop:
@@ -70,7 +79,7 @@
     dest: /etc/systemd/system/cert-sync.service
     content: |
       [Unit]
-      Description=Pull TLS cert from VPS and push to Technitium LXC
+      Description=Pull TLS cert from VPS and push to LXCs
       [Service]
       Type=oneshot
       ExecStart=/bin/bash -c '\
@@ -85,7 +94,11 @@
         pct exec {{ technitium_lxc_id }} -- systemctl restart technitium && \
         cp {{ proxmox_cert_dir }}/fullchain.pem /etc/pve/local/pve-ssl.pem && \
         cp {{ proxmox_cert_dir }}/privkey.pem /etc/pve/local/pve-ssl.key && \
-        systemctl restart pveproxy'
+        systemctl restart pveproxy && \
+        pct exec 102 -- mkdir -p /etc/nginx/certs && \
+        pct push 102 {{ proxmox_cert_dir }}/fullchain.pem /etc/nginx/certs/fullchain.pem && \
+        pct push 102 {{ proxmox_cert_dir }}/privkey.pem /etc/nginx/certs/privkey.pem && \
+        pct exec 102 -- systemctl reload nginx'
   notify: Reload systemd
 
 - name: Install cert-sync systemd timer
