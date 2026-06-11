@@ -29,3 +29,8 @@ variable "searxng_root_password" {
   description = "Root password for SearXNG LXC"
   sensitive   = true
 }
+
+variable "openclaw_root_password" {
+  description = "Root/user password for OpenClaw VM"
+  sensitive   = true
+}

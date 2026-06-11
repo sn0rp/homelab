@@ -10,12 +10,14 @@ TOKEN_SECRET  = $(call vault_var,proxmox_token_secret)
 TECH_PASS     = $(call vault_var,technitium_admin_password)
 PROV_PASS     = $(call vault_var,provisioning_root_password)
 SEARXNG_PASS  = $(call vault_var,searxng_root_password)
+OPENCLAW_PASS = $(call vault_var,openclaw_root_password)
 
 TF_FLAGS = \
   -var="proxmox_token_secret=$(TOKEN_SECRET)" \
   -var="technitium_admin_password=$(TECH_PASS)" \
   -var="provisioning_root_password=$(PROV_PASS)" \
-  -var="searxng_root_password=$(SEARXNG_PASS)"
+  -var="searxng_root_password=$(SEARXNG_PASS)" \
+  -var="openclaw_root_password=$(OPENCLAW_PASS)"
 
 help:
 	@echo "homelab IaC"
@@ -31,6 +33,10 @@ init:
 	cd $(TF_DIR) && terraform init
 
 import-%:
+	cd $(TF_DIR) && terraform import $(TF_FLAGS) \
+	  proxmox_virtual_environment_vm.$* proxmox/$(id)
+
+import-lxc-%:
 	cd $(TF_DIR) && terraform import $(TF_FLAGS) \
 	  proxmox_virtual_environment_container.$* proxmox/$(id)
 
@@ -66,4 +72,5 @@ test:
 	@echo -n "Provisioning menu:   "; curl -sf http://provisioning.snorp.dev/boot.cfg > /dev/null && echo "OK" || echo "FAIL"
 	@echo -n "Provisioner health:  "; curl -sf http://provisioning.snorp.dev:8080/health > /dev/null && echo "OK" || echo "FAIL"
 	@echo -n "SearXNG:             "; curl -sf https://searx.snorp.dev/ > /dev/null && echo "OK" || echo "FAIL"
+	@echo -n "OpenClaw UI:         "; curl -sfk https://openclaw.snorp.dev > /dev/null && echo "OK" || echo "FAIL"
 	@echo -n "DNS resolution:      "; nslookup proxmox.snorp.dev 192.168.8.104 > /dev/null 2>&1 && echo "OK" || echo "FAIL"

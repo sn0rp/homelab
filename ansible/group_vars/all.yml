@@ -6,10 +6,13 @@ technitium_ip: 192.168.8.104
 proxmox_ip: 192.168.8.187
 provisioning_ip: 192.168.8.180
 searxng_ip: 192.168.8.139
+openclaw_ip: 192.168.8.140
 searxng_port: 8888
 technitium_lxc_id: 100
 provisioning_lxc_id: 101
 searxng_lxc_id: 102
+
+openclaw_searxng_url: "http://searx.snorp.dev:8888"
 
 # Cert paths
 certbot_cert_name: snorp.dev-0001
@@ -27,6 +30,7 @@ technitium_dns_records:
   - { name: "proxmox",      type: A, value: "{{ proxmox_ip }}" }
   - { name: "provisioning", type: A, value: "{{ provisioning_ip }}" }
   - { name: "searx",        type: A, value: "192.168.8.139" }
+  - { name: "openclaw",     type: A, value: "192.168.8.140" }
 
 technitium_forwarders:
   - https://cloudflare-dns.com/dns-query

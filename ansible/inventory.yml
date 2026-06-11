@@ -27,6 +27,10 @@ all:
           ansible_host: 192.168.8.139
           ansible_user: root
           lxc_id: 102
+        openclaw:
+          ansible_host: 192.168.8.140
+          ansible_user: root
+          lxc_id: 200
 
     router_hosts:
       hosts:

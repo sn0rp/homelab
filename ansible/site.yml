@@ -47,3 +47,11 @@
   roles:
     - role: searxng
       tags: searxng
+
+- name: OpenClaw VM
+  hosts: openclaw
+  vars_files:
+    - vault.yml
+  roles:
+    - role: openclaw
+      tags: openclaw

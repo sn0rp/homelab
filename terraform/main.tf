@@ -78,6 +78,7 @@ resource "proxmox_virtual_environment_container" "technitium" {
       initialization[0].ip_config,
       operating_system[0].template_file_id,
       description,
+      console,
     ]
   }
 
@@ -148,6 +149,7 @@ resource "proxmox_virtual_environment_container" "provisioning" {
       initialization[0].ip_config,
       operating_system[0].template_file_id,
       description,
+      console,
     ]
   }
 
@@ -208,6 +210,7 @@ resource "proxmox_virtual_environment_container" "searxng" {
 
   features {
     nesting = true
+    keyctl  = true
   }
 
   lifecycle {
@@ -216,6 +219,8 @@ resource "proxmox_virtual_environment_container" "searxng" {
       initialization[0].ip_config,
       operating_system[0].template_file_id,
       description,
+      features[0].keyctl,
+      console,
     ]
   }
 
@@ -227,5 +232,54 @@ resource "proxmox_virtual_environment_container" "searxng" {
         --limit searxng \
         --vault-password-file ${path.module}/../ansible/.vault_pass
     EOT
+  }
+}
+
+resource "proxmox_virtual_environment_vm" "openclaw" {
+  node_name = var.proxmox_node
+  vm_id     = 200
+  name      = "openclaw.snorp.dev"
+  on_boot   = true
+  started   = true
+
+  cpu {
+    cores = 4
+    type  = "x86-64-v2-AES"
+  }
+
+  memory {
+    dedicated = 8192
+  }
+
+  disk {
+    datastore_id = "local"
+    size         = 256
+    interface    = "scsi0"
+    file_format  = "qcow2"
+    iothread     = true
+  }
+
+  network_device {
+    bridge      = "vmbr0"
+    model       = "virtio"
+    mac_address = "BC:24:11:22:44:D2"
+    firewall    = false
+  }
+
+  serial_device {
+    device = "socket"
+  }
+
+  operating_system {
+    type = "l26"
+  }
+
+  scsi_hardware = "virtio-scsi-single"
+
+  lifecycle {
+    ignore_changes = [
+      initialization,
+      disk[0].file_id,
+    ]
   }
 }

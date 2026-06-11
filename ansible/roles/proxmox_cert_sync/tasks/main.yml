@@ -66,6 +66,15 @@
     - pct exec 102 -- systemctl reload nginx
   changed_when: true
 
+- name: Push cert to OpenClaw VM
+  command: "{{ item }}"
+  loop:
+    - ssh snorp@{{ openclaw_ip }} "sudo mkdir -p /etc/nginx/certs"
+    - scp {{ proxmox_cert_dir }}/fullchain.pem snorp@{{ openclaw_ip }}:/tmp/fullchain.pem
+    - scp {{ proxmox_cert_dir }}/privkey.pem snorp@{{ openclaw_ip }}:/tmp/privkey.pem
+    - ssh snorp@{{ openclaw_ip }} "sudo mv /tmp/fullchain.pem /etc/nginx/certs/fullchain.pem && sudo mv /tmp/privkey.pem /etc/nginx/certs/privkey.pem && sudo systemctl reload nginx"
+  changed_when: true
+
 - name: Install wildcard cert for Proxmox web UI
   command: "{{ item }}"
   loop:
@@ -98,7 +107,11 @@
         pct exec 102 -- mkdir -p /etc/nginx/certs && \
         pct push 102 {{ proxmox_cert_dir }}/fullchain.pem /etc/nginx/certs/fullchain.pem && \
         pct push 102 {{ proxmox_cert_dir }}/privkey.pem /etc/nginx/certs/privkey.pem && \
-        pct exec 102 -- systemctl reload nginx'
+        pct exec 102 -- systemctl reload nginx \
+        ssh root@192.168.8.140 "mkdir -p /etc/nginx/certs" && \
+        scp /etc/pve/local/certs/fullchain.pem root@192.168.8.140:/etc/nginx/certs/fullchain.pem && \
+        scp /etc/pve/local/certs/privkey.pem root@192.168.8.140:/etc/nginx/certs/privkey.pem && \
+        ssh root@192.168.8.140 "systemctl reload nginx"'
   notify: Reload systemd
 
 - name: Install cert-sync systemd timer

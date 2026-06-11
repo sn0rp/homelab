@@ -1,0 +1,253 @@
+---
+# Go installation
+- name: Check Go version
+  command: go version
+  register: go_installed
+  failed_when: false
+  changed_when: false
+
+- name: Install Go
+  shell: |
+    wget -q https://go.dev/dl/go1.23.4.linux-amd64.tar.gz -O /tmp/go.tar.gz
+    rm -rf /usr/local/go
+    tar -C /usr/local -xzf /tmp/go.tar.gz
+    rm /tmp/go.tar.gz
+    ln -sf /usr/local/go/bin/go /usr/local/bin/go
+  when: go_installed.rc != 0 or '1.23' not in go_installed.stdout
+
+- name: Add Go to root PATH
+  lineinfile:
+    path: /root/.bashrc
+    line: 'export PATH=$PATH:/usr/local/go/bin:/root/go/bin'
+    create: yes
+
+# Node.js
+- name: Check if NodeSource key exists
+  stat:
+    path: /etc/apt/keyrings/nodesource.gpg
+  register: nodesource_key
+
+- name: Add NodeSource GPG key
+  shell: |
+    curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | \
+      gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg
+  when: not nodesource_key.stat.exists
+
+- name: Add NodeSource repository
+  copy:
+    dest: /etc/apt/sources.list.d/nodesource.list
+    content: |
+      deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_22.x nodistro main
+
+- name: Install Node.js
+  apt:
+    name: nodejs
+    state: present
+    update_cache: yes
+
+# OpenClaw
+- name: Check if OpenClaw is installed
+  stat:
+    path: /root/.openclaw
+  register: openclaw_dir
+
+- name: Install OpenClaw non-interactively
+  shell: curl -fsSL https://openclaw.ai/install.sh | bash -s -- --no-onboard
+  environment:
+    HOME: /root
+  when: not openclaw_dir.stat.exists
+
+# State restore
+- name: Check if state backup exists on Proxmox host
+  stat:
+    path: /root/openclaw-state.tgz
+  register: state_tgz
+  delegate_to: proxmox
+
+- name: Check if OpenClaw config already exists
+  stat:
+    path: /root/.openclaw/openclaw.json
+  register: openclaw_config
+
+- name: Transfer state tgz to VM
+  command: scp /root/openclaw-state.tgz root@{{ ansible_host }}:/root/openclaw-state.tgz
+  delegate_to: proxmox
+  when:
+    - state_tgz.stat.exists
+    - not openclaw_config.stat.exists
+
+- name: Extract state
+  shell: |
+    cd /root
+    tar -xzf openclaw-state.tgz --exclude='._.openclaw'
+    chown -R root:root /root/.openclaw
+    rm openclaw-state.tgz
+  when:
+    - state_tgz.stat.exists
+    - not openclaw_config.stat.exists
+
+- name: Fix openclaw ownership (macOS backup may have wrong owner)
+  file:
+    path: /root/.openclaw
+    owner: root
+    group: root
+    recurse: yes
+
+- name: Fix workspace path in openclaw.json
+  shell: |
+    python3 -c "
+    import json
+    with open('/root/.openclaw/openclaw.json', 'r') as f:
+        config = json.load(f)
+    changed = False
+    agents = config.get('agents', {}).get('defaults', {})
+    if agents.get('workspace', '').startswith('/Users/'):
+        config['agents']['defaults']['workspace'] = '/root/.openclaw/workspace'
+        changed = True
+    if changed:
+        with open('/root/.openclaw/openclaw.json', 'w') as f:
+            json.dump(config, f, indent=2)
+        print('changed')
+    else:
+        print('ok')
+    "
+  register: workspace_fix
+  changed_when: "'changed' in workspace_fix.stdout"
+
+- name: Configure openclaw gateway settings
+  shell: |
+    python3 -c "
+    import json
+    with open('/root/.openclaw/openclaw.json', 'r') as f:
+        config = json.load(f)
+    gw = config.setdefault('gateway', {})
+    ui = gw.setdefault('controlUi', {})
+    ui['allowedOrigins'] = ['https://openclaw.snorp.dev']
+    gw['trustedProxies'] = ['127.0.0.1']
+    with open('/root/.openclaw/openclaw.json', 'w') as f:
+        json.dump(config, f, indent=2)
+    print('done')
+    "
+  changed_when: true
+
+# SearXNG env var
+- name: Set SearXNG base URL
+  lineinfile:
+    path: /root/.bashrc
+    line: 'export SEARXNG_BASE_URL={{ openclaw_searxng_url }}'
+
+- name: Set XDG_RUNTIME_DIR for root
+  lineinfile:
+    path: /root/.bashrc
+    line: 'export XDG_RUNTIME_DIR=/run/user/0'
+
+# nginx
+- name: Create nginx cert directory
+  file:
+    path: /etc/nginx/certs
+    state: directory
+
+- name: Configure nginx reverse proxy
+  copy:
+    dest: /etc/nginx/sites-available/openclaw
+    content: |
+      server {
+          listen 80 default_server;
+          server_name openclaw.snorp.dev;
+          return 301 https://$host$request_uri;
+      }
+      server {
+          listen 443 ssl default_server;
+          server_name openclaw.snorp.dev;
+          ssl_certificate /etc/nginx/certs/fullchain.pem;
+          ssl_certificate_key /etc/nginx/certs/privkey.pem;
+          location / {
+              proxy_pass http://127.0.0.1:18789;
+              proxy_http_version 1.1;
+              proxy_set_header Upgrade $http_upgrade;
+              proxy_set_header Connection "upgrade";
+              proxy_set_header Host $host;
+              proxy_set_header X-Real-IP $remote_addr;
+          }
+      }
+  notify: Reload nginx
+
+- name: Enable openclaw nginx site
+  file:
+    src: /etc/nginx/sites-available/openclaw
+    dest: /etc/nginx/sites-enabled/openclaw
+    state: link
+  notify: Reload nginx
+
+- name: Remove default nginx site
+  file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+  notify: Reload nginx
+
+- name: Disable Apache (pulled in by PHP, conflicts with nginx on port 80)
+  systemd:
+    name: apache2
+    enabled: no
+    state: stopped
+  failed_when: false
+
+# OpenClaw gateway service
+- name: Install OpenClaw gateway service
+  shell: openclaw gateway install
+  environment:
+    HOME: /root
+  args:
+    creates: /root/.config/systemd/user/openclaw-gateway.service
+
+- name: Install OpenClaw discord plugin
+  shell: XDG_RUNTIME_DIR=/run/user/0 openclaw plugins install @openclaw/discord --force
+  environment:
+    HOME: /root
+  changed_when: true
+
+- name: Run openclaw doctor to repair state and migrate auth
+  shell: echo "n" | XDG_RUNTIME_DIR=/run/user/0 openclaw doctor --fix
+  environment:
+    HOME: /root
+  changed_when: true
+  failed_when: false
+
+- name: Enable lingering for root
+  command: loginctl enable-linger root
+  changed_when: false
+
+- name: Enable and start OpenClaw gateway service
+  shell: |
+    systemctl --user daemon-reload
+    systemctl --user enable openclaw-gateway.service
+    systemctl --user restart openclaw-gateway.service
+  environment:
+    HOME: /root
+    XDG_RUNTIME_DIR: /run/user/0
+  changed_when: true
+
+# Backup cron
+- name: Create backup directory on Proxmox
+  file:
+    path: /root/openclaw-backups
+    state: directory
+  delegate_to: proxmox
+
+- name: Install backup cron
+  cron:
+    name: "OpenClaw state backup"
+    minute: "0"
+    hour: "3"
+    job: >
+      tar -czf /tmp/openclaw-backup-$(date +\%Y\%m\%d).tgz -C /root .openclaw &&
+      scp /tmp/openclaw-backup-$(date +\%Y\%m\%d).tgz root@192.168.8.187:/root/openclaw-backups/ &&
+      rm /tmp/openclaw-backup-$(date +\%Y\%m\%d).tgz &&
+      find /root/openclaw-backups/ -name "openclaw-backup-*.tgz" -mtime +7 -delete
+    user: root
+
+# Mark bootstrap complete
+- name: Mark bootstrap done
+  file:
+    path: /etc/openclaw-bootstrap-done
+    state: touch
