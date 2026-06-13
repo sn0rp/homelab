@@ -1,4 +1,11 @@
 ---
+# Fix /tmp permissions (Ubuntu LXC may mount tmpfs with 700 instead of 1777)
+- name: Ensure /tmp is world-writable (required for apt gpgv signature verification)
+  file:
+    path: /tmp
+    mode: '1777'
+    state: directory
+
 # Go installation
 - name: Check Go version
   command: go version
