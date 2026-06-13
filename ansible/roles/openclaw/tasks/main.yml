@@ -227,23 +227,58 @@
     XDG_RUNTIME_DIR: /run/user/0
   changed_when: true
 
-# Backup cron
-- name: Create backup directory on Proxmox
-  file:
-    path: /root/openclaw-backups
-    state: directory
-  delegate_to: proxmox
+# Backup to NAS via SMB
+- name: Install cifs-utils for SMB mount
+  apt:
+    name: cifs-utils
+    state: present
 
-- name: Install backup cron
+- name: Create NAS credentials file
+  copy:
+    dest: /root/.nas-smb-credentials
+    content: |
+      username={{ nas_smb_username }}
+      password={{ nas_smb_password }}
+    mode: '0600'
+
+- name: Create NAS mount point
+  file:
+    path: /mnt/nas-backups
+    state: directory
+
+- name: Install openclaw backup script
+  copy:
+    dest: /usr/local/bin/openclaw-backup.sh
+    mode: '0700'
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+      MOUNT=/mnt/nas-backups
+      BACKUP_DIR=$MOUNT/openclaw-backups
+      DATE=$(date +%Y%m%d)
+      ARCHIVE=/tmp/openclaw-backup-$DATE.tgz
+
+      mkdir -p "$MOUNT"
+      mount -t cifs //{{ nas_ip }}/{{ nas_smb_share }} "$MOUNT" \
+        -o credentials=/root/.nas-smb-credentials,vers=3.0,uid=0,gid=0,soft
+      trap "umount '$MOUNT' 2>/dev/null || true" EXIT
+
+      mkdir -p "$BACKUP_DIR"
+      tar -czf "$ARCHIVE" -C /root .openclaw
+      mv "$ARCHIVE" "$BACKUP_DIR/"
+      find "$BACKUP_DIR" -name "openclaw-backup-*.tgz" -mtime +7 -delete
+
+- name: Remove old Proxmox-based backup cron
   cron:
     name: "OpenClaw state backup"
+    state: absent
+
+- name: Install backup cron (direct to NAS via SMB)
+  cron:
+    name: "OpenClaw state backup to NAS"
     minute: "0"
     hour: "3"
-    job: >
-      tar -czf /tmp/openclaw-backup-$(date +\%Y\%m\%d).tgz -C /root .openclaw &&
-      scp /tmp/openclaw-backup-$(date +\%Y\%m\%d).tgz root@192.168.8.187:/root/openclaw-backups/ &&
-      rm /tmp/openclaw-backup-$(date +\%Y\%m\%d).tgz &&
-      find /root/openclaw-backups/ -name "openclaw-backup-*.tgz" -mtime +7 -delete
+    job: /usr/local/bin/openclaw-backup.sh
     user: root
 
 # Mark bootstrap complete
