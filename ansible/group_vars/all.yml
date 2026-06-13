@@ -6,7 +6,7 @@ technitium_ip: 192.168.8.104
 proxmox_ip: 192.168.8.187
 nas_ip: 192.168.8.204
 nas_smb_username: snorp
-nas_smb_share: backups  # confirm share name in TrueNAS UI
+nas_smb_share: documents
 provisioning_ip: 192.168.8.180
 searxng_ip: 192.168.8.139
 openclaw_ip: 192.168.8.140
@@ -32,8 +32,8 @@ technitium_dns_records:
   - { name: "technitium",   type: A, value: "{{ technitium_ip }}" }
   - { name: "proxmox",      type: A, value: "{{ proxmox_ip }}" }
   - { name: "provisioning", type: A, value: "{{ provisioning_ip }}" }
-  - { name: "searx",        type: A, value: "192.168.8.139" }
-  - { name: "openclaw",     type: A, value: "192.168.8.140" }
+  - { name: "searx",        type: A, value: "{{ searxng_ip }}" }
+  - { name: "openclaw",     type: A, value: "{{ openclaw_ip }}" }
   - { name: "nas",          type: A, value: "{{ nas_ip }}" }
 
 technitium_forwarders:
