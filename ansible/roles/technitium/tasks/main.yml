@@ -45,7 +45,7 @@
       token: "{{ tech_token }}"
       enableBlocking: "true"
       blockingType: NxDomain
-      blockListUrls: "https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts\nhttps://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/wildcard/multi-onlydomains.txt"
+      blockListUrls: "https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts\nhttps://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/adblock/multi.txt"
       blockListUpdateIntervalHours: "24"
 
 - name: Create snorp.dev primary zone
@@ -88,6 +88,35 @@
       webServiceHttpsPort: "53443"
       webServiceTlsCertificatePath: "{{ technitium_pfx_path }}"
       webServiceTlsCertificatePassword: ""
+
+- name: Block ad/tracking domains not covered by upstream lists
+  # Gaps found via https://paileactivist.github.io/toolz/adblock.html test (2026-06-14)
+  # Hagezi adblock/multi.txt uses ||domain^ syntax (blocks domain + all subdomains), but
+  # these specific domains or their parent zones are missing from that list entirely.
+  # Skipped intentionally: widgets.pinterest.com (breaks embedded content),
+  #   d.reddit.com (Reddit CDN - breaks Reddit)
+  uri:
+    url: "http://{{ ansible_host }}:5380/api/zones/create"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      token: "{{ tech_token }}"
+      zone: "{{ item }}"
+      type: Blocked
+  register: custom_block_result
+  failed_when:
+    - custom_block_result.status != 200
+    - '"already exists" not in (custom_block_result.json.errorMessage | default(""))'
+  loop:
+    - "ads.google.com"
+    - "doubleclick.net"
+    - "ads.reddit.com"
+    - "data.mistat.xiaomi.com"
+    - "data.mistat.intl.xiaomi.com"
+    - "data.mistat.india.xiaomi.com"
+    - "data.mistat.rus.xiaomi.com"
+    - "tracking.india.miui.com"
+    - "tracking.rus.miui.com"
 
 - name: Enable DoH
   uri:
