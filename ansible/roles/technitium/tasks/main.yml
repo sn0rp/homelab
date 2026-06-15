@@ -45,8 +45,16 @@
       token: "{{ tech_token }}"
       enableBlocking: "true"
       blockingType: NxDomain
-      blockListUrls: "https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts\nhttps://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/adblock/multi.txt"
+      blockListUrls: "https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts\nhttps://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/wildcard/multi-onlydomains.txt"
       blockListUpdateIntervalHours: "24"
+
+- name: Force immediate block list download after URL change
+  uri:
+    url: "http://{{ ansible_host }}:5380/api/settings/updateAllBlockLists?token={{ tech_token }}"
+    method: GET
+    status_code: 200
+  register: update_result
+  failed_when: update_result.json.status | default('error') != 'ok'
 
 - name: Create snorp.dev primary zone
   uri:
@@ -91,8 +99,8 @@
 
 - name: Block ad/tracking domains not covered by upstream lists
   # Gaps found via https://paileactivist.github.io/toolz/adblock.html test (2026-06-14)
-  # Hagezi adblock/multi.txt uses ||domain^ syntax (blocks domain + all subdomains), but
-  # these specific domains or their parent zones are missing from that list entirely.
+  # Technitium's Blocked zone type covers the zone root and all subdomains, so
+  # these entries catch domains/parents missing from the Hagezi list entirely.
   # Skipped intentionally: widgets.pinterest.com (breaks embedded content),
   #   d.reddit.com (Reddit CDN - breaks Reddit)
   uri:
