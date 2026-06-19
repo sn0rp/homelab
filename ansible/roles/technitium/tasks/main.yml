@@ -36,7 +36,7 @@
       forwarders: "{{ technitium_forwarders | join(',') }}"
       forwarderProtocol: Https
 
-- name: Configure blocking settings
+- name: Configure blocking settings (general)
   uri:
     url: "http://{{ ansible_host }}:5380/api/settings/set"
     method: POST
@@ -45,12 +45,30 @@
       token: "{{ tech_token }}"
       enableBlocking: "true"
       blockingType: NxDomain
-      blockListUrls: "https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts\nhttps://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/wildcard/multi-onlydomains.txt"
       blockListUpdateIntervalHours: "24"
+
+# Technitium expects blockListUrls as repeated form fields, one per URL.
+# A newline-joined single string is stored as one invalid URL and silently
+# disables all blocking (enableBlocking stays true but the list is empty).
+# We build the raw urlencoded body so each URL is its own blockListUrls field.
+- name: Set block list URLs (one repeated field per URL)
+  uri:
+    url: "http://{{ ansible_host }}:5380/api/settings/set"
+    method: POST
+    headers:
+      Content-Type: application/x-www-form-urlencoded
+    body: >-
+      token={{ tech_token | urlencode }}&{{
+      technitium_blocklist_urls
+      | map('urlencode')
+      | map('regex_replace', '^', 'blockListUrls=')
+      | join('&') }}
+  register: blocklist_result
+  failed_when: blocklist_result.json.status | default('error') != 'ok'
 
 - name: Force immediate block list download after URL change
   uri:
-    url: "http://{{ ansible_host }}:5380/api/settings/updateAllBlockLists?token={{ tech_token }}"
+    url: "http://{{ ansible_host }}:5380/api/settings/forceUpdateBlockLists?token={{ tech_token }}"
     method: GET
     status_code: 200
   register: update_result

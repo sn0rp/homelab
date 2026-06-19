@@ -40,3 +40,10 @@ technitium_forwarders:
   - https://cloudflare-dns.com/dns-query
   - https://dns.quad9.net/dns-query
   - https://dns.google/dns-query
+
+# Block lists. Technitium's API takes blockListUrls as REPEATED form fields,
+# one per URL - NOT a single newline-joined string. Joining with \n stores one
+# mangled URL and silently disables all blocking. See technitium role.
+technitium_blocklist_urls:
+  - https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts
+  - https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/wildcard/multi-onlydomains.txt
