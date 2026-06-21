@@ -281,7 +281,6 @@ resource "proxmox_virtual_environment_container" "hawkeye" {
 
   features {
     nesting = true
-    keyctl  = true
   }
 
   lifecycle {
@@ -351,7 +350,6 @@ resource "proxmox_virtual_environment_container" "ntfy" {
 
   features {
     nesting = true
-    keyctl  = true
   }
 
   lifecycle {
