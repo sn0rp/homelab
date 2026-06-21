@@ -12,16 +12,24 @@
     state: present
     update_cache: yes
 
+- name: Ensure apt keyrings dir exists
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: "0755"
+
+# Repo moved to archive.ntfy.sh in Sept 2025; old archive.heckel.io is
+# being phased out. Key is now a binary gpg keyring, not ASCII pubkey.txt.
 - name: Add ntfy apt signing key
   ansible.builtin.get_url:
-    url: https://archive.heckel.io/apt/pubkey.txt
-    dest: /etc/apt/trusted.gpg.d/ntfy.asc
+    url: https://archive.ntfy.sh/apt/keyring.gpg
+    dest: /etc/apt/keyrings/ntfy.gpg
     mode: "0644"
 
 - name: Add ntfy apt repository
   ansible.builtin.copy:
     dest: /etc/apt/sources.list.d/ntfy.list
-    content: "deb [arch=amd64 signed-by=/etc/apt/trusted.gpg.d/ntfy.asc] https://archive.heckel.io/apt debian main\n"
+    content: "deb [arch=amd64 signed-by=/etc/apt/keyrings/ntfy.gpg] https://archive.ntfy.sh/apt stable main\n"
   register: ntfy_repo
 
 - name: Update apt cache after adding ntfy repo
