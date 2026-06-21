@@ -1,0 +1,7 @@
+---
+- name: Restart ntfy
+  systemd:
+    name: ntfy
+    state: restarted
+    enabled: yes
+    daemon_reload: yes

@@ -10,6 +10,21 @@ nas_smb_share: documents
 provisioning_ip: 192.168.8.180
 searxng_ip: 192.168.8.139
 openclaw_ip: 192.168.8.140
+hawkeye_ip: 192.168.8.105   # TBD: confirm + reserve after first provision
+ntfy_ip: 192.168.8.106      # TBD: confirm + reserve after first provision
+
+# --- Outage monitor / ISP probe targets ---
+# router LAN gateway (internal-alive anchor) - genuinely static
+router_lan_ip: 192.168.8.1
+# Public anchors for upstream/peering probe - static
+public_anchors:
+  - 1.1.1.1
+  - 8.8.8.8
+# NOTE: the Spectrum WAN gateway (currently 98.26.78.1) is NOT hardcoded.
+# It is discovered dynamically as the first hop toward 1.1.1.1 (see hawkeye role).
+
+# ntfy topic the phone subscribes to for outage alerts
+ntfy_outage_topic: spectrum-outage
 searxng_port: 8888
 technitium_lxc_id: 100
 provisioning_lxc_id: 101
@@ -35,6 +50,8 @@ technitium_dns_records:
   - { name: "searx",        type: A, value: "{{ searxng_ip }}" }
   - { name: "openclaw",     type: A, value: "{{ openclaw_ip }}" }
   - { name: "nas",          type: A, value: "{{ nas_ip }}" }
+  - { name: "hawkeye",      type: A, value: "{{ hawkeye_ip }}" }
+  - { name: "ntfy",         type: A, value: "{{ ntfy_ip }}" }
 
 technitium_forwarders:
   - https://cloudflare-dns.com/dns-query

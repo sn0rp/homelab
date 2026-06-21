@@ -1,0 +1,17 @@
+---
+# Pinned upstream versions (official Prometheus release tarballs).
+prometheus_version: "3.12.0"
+alertmanager_version: "0.33.0"
+blackbox_version: "0.28.0"
+
+prometheus_arch: linux-amd64
+
+# Where binaries land
+prom_install_dir: /opt/prometheus
+
+# Scrape/probe cadence
+scrape_interval: "15s"
+
+# How long a target must be down before we declare an outage (flap guard).
+# blackbox probes every 15s; 90s = ~6 consecutive failures before alerting.
+outage_for: "90s"

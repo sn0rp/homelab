@@ -1,0 +1,54 @@
+# Managed by Ansible (hawkeye role).
+global:
+  scrape_interval: {{ scrape_interval }}
+  evaluation_interval: {{ scrape_interval }}
+
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["127.0.0.1:9093"]
+
+scrape_configs:
+  # Prometheus self
+  - job_name: prometheus
+    static_configs:
+      - targets: ["127.0.0.1:9090"]
+
+  # ICMP reachability probes via blackbox. Targets come from file-SD:
+  #   static.yml       -> router_lan + public_anchor
+  #   isp_gateway.yml  -> dynamically discovered Spectrum gateway
+  - job_name: blackbox_icmp
+    metrics_path: /probe
+    params:
+      module: [icmp_v4]
+    file_sd_configs:
+      - files:
+          - /etc/prometheus/targets/static.yml
+          - /etc/prometheus/targets/isp_gateway.yml
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: 127.0.0.1:9115
+
+  # Application-layer internet check: TCP+TLS to a public anchor.
+  - job_name: blackbox_tcp_internet
+    metrics_path: /probe
+    params:
+      module: [tcp_connect]
+    static_configs:
+      - targets: ["1.1.1.1:443"]
+        labels:
+          probe_role: "internet_app"
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: 127.0.0.1:9115

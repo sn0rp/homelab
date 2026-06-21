@@ -1,0 +1,10 @@
+[Unit]
+Description=Periodically refresh the discovered Spectrum WAN gateway
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=5m
+AccuracySec=10s
+
+[Install]
+WantedBy=timers.target

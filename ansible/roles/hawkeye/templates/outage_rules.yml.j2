@@ -1,0 +1,55 @@
+# Managed by Ansible (hawkeye role).
+# Spectrum outage classification. The whole point: distinguish ISP failure
+# from internal homelab failure, and detect recovery.
+#
+# probe_success is the blackbox metric (1 = reachable, 0 = down).
+# Labels: probe_role in {router_lan, isp_gateway, public_anchor, internet_app}
+#
+# "for: {{ outage_for }}" is the flap guard - a target must stay down that long
+# before the alert fires, so a single dropped ping doesn't page you.
+
+groups:
+  - name: spectrum_outage
+    rules:
+      # Convenience recording rules: is each layer up right now?
+      - record: layer:router_lan:up
+        expr: max(probe_success{probe_role="router_lan"})
+      - record: layer:isp_gateway:up
+        expr: max(probe_success{probe_role="isp_gateway"})
+      - record: layer:public:up
+        expr: max(probe_success{probe_role=~"public_anchor|internet_app"})
+
+      # ---- INTERNAL FAILURE: the LAN/router itself is down ----
+      # This is YOUR problem, not Spectrum's. Note: if this is true, Hawkeye
+      # may also be cut off; alert delivery is best-effort.
+      - alert: InternalNetworkFailure
+        expr: layer:router_lan:up == 0
+        for: {{ outage_for }}
+        labels:
+          severity: critical
+          outage_class: internal
+        annotations:
+          summary: "Internal network failure - router/LAN unreachable"
+          description: "Hawkeye cannot reach the router ({{ router_lan_ip }}). This is an internal homelab failure, NOT a Spectrum outage."
+
+      # ---- SPECTRUM LAST-MILE: router up, but ISP gateway dead ----
+      - alert: SpectrumLastMileDown
+        expr: (layer:router_lan:up == 1) and (layer:isp_gateway:up == 0)
+        for: {{ outage_for }}
+        labels:
+          severity: critical
+          outage_class: isp_lastmile
+        annotations:
+          summary: "Spectrum outage - last mile / modem sync down"
+          description: "Router is up but the Spectrum gateway is unreachable. This is a Spectrum last-mile outage (modem sync / CMTS), not your equipment."
+
+      # ---- SPECTRUM UPSTREAM: router + ISP gw up, but no public internet ----
+      - alert: SpectrumUpstreamDown
+        expr: (layer:router_lan:up == 1) and (layer:isp_gateway:up == 1) and (layer:public:up == 0)
+        for: {{ outage_for }}
+        labels:
+          severity: critical
+          outage_class: isp_upstream
+        annotations:
+          summary: "Spectrum outage - upstream / peering / routing"
+          description: "Router and Spectrum gateway are reachable, but the public internet is not. This is a Spectrum upstream routing/peering outage, not your equipment."

@@ -1,0 +1,7 @@
+[Unit]
+Description=Discover current Spectrum WAN gateway (first hop) for blackbox probe
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/discover-isp-gateway.sh

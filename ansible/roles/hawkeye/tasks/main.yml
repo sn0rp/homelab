@@ -1,0 +1,247 @@
+---
+# Hawkeye - monitoring stack + Spectrum outage classifier.
+#
+# Components:
+#   - Prometheus            (metrics TSDB + scraper)        :9090
+#   - Alertmanager          (alert routing -> ntfy)         :9093
+#   - blackbox_exporter     (reachability probes)           :9115
+#   - Grafana               (dashboards, LAN-visible)       :3000
+#   - Loki + Promtail       (logs, for the broader homelab goal)  :3100
+#   - isp-gateway-discovery (writes current Spectrum gateway for the probe)
+#
+# The Spectrum WAN gateway is NOT hardcoded. A timer discovers it as the
+# first hop toward 1.1.1.1 and writes it into a file-based service-discovery
+# target that blackbox/Prometheus pick up. Self-healing if Spectrum renumbers.
+
+- name: Install prerequisites
+  apt:
+    name:
+      - curl
+      - wget
+      - tar
+      - traceroute
+      - apt-transport-https
+      - gnupg
+      - software-properties-common
+    state: present
+    update_cache: yes
+
+# ---------------------------------------------------------------------------
+# Prometheus, Alertmanager, blackbox_exporter  (upstream binaries + systemd)
+# ---------------------------------------------------------------------------
+- name: Create prometheus system user
+  ansible.builtin.user:
+    name: prometheus
+    system: yes
+    shell: /usr/sbin/nologin
+    home: "{{ prom_install_dir }}"
+    create_home: no
+
+- name: Create install + data + config directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: prometheus
+    group: prometheus
+    mode: "0755"
+  loop:
+    - "{{ prom_install_dir }}"
+    - "{{ prom_install_dir }}/bin"
+    - /etc/prometheus
+    - /etc/prometheus/rules
+    - /etc/prometheus/targets
+    - /etc/alertmanager
+    - /etc/blackbox_exporter
+    - /var/lib/prometheus
+    - /var/lib/alertmanager
+
+- name: Download + unpack Prometheus
+  ansible.builtin.unarchive:
+    src: "https://github.com/prometheus/prometheus/releases/download/v{{ prometheus_version }}/prometheus-{{ prometheus_version }}.{{ prometheus_arch }}.tar.gz"
+    dest: "{{ prom_install_dir }}"
+    remote_src: yes
+    extra_opts: ["--strip-components=1", "--wildcards", "*/prometheus", "*/promtool"]
+    creates: "{{ prom_install_dir }}/prometheus"
+  notify: Restart prometheus
+
+- name: Place prometheus + promtool on PATH
+  ansible.builtin.copy:
+    remote_src: yes
+    src: "{{ prom_install_dir }}/{{ item }}"
+    dest: "/usr/local/bin/{{ item }}"
+    mode: "0755"
+  loop:
+    - prometheus
+    - promtool
+
+- name: Download + unpack Alertmanager
+  ansible.builtin.unarchive:
+    src: "https://github.com/prometheus/alertmanager/releases/download/v{{ alertmanager_version }}/alertmanager-{{ alertmanager_version }}.{{ prometheus_arch }}.tar.gz"
+    dest: /usr/local/bin
+    remote_src: yes
+    extra_opts: ["--strip-components=1", "--wildcards", "*/alertmanager", "*/amtool"]
+    creates: /usr/local/bin/alertmanager
+  notify: Restart alertmanager
+
+- name: Download + unpack blackbox_exporter
+  ansible.builtin.unarchive:
+    src: "https://github.com/prometheus/blackbox_exporter/releases/download/v{{ blackbox_version }}/blackbox_exporter-{{ blackbox_version }}.{{ prometheus_arch }}.tar.gz"
+    dest: /usr/local/bin
+    remote_src: yes
+    extra_opts: ["--strip-components=1", "--wildcards", "*/blackbox_exporter"]
+    creates: /usr/local/bin/blackbox_exporter
+  notify: Restart blackbox_exporter
+
+# ---------------------------------------------------------------------------
+# Config files
+# ---------------------------------------------------------------------------
+- name: Deploy blackbox_exporter config
+  ansible.builtin.copy:
+    src: blackbox.yml
+    dest: /etc/blackbox_exporter/blackbox.yml
+    owner: prometheus
+    group: prometheus
+    mode: "0644"
+  notify: Restart blackbox_exporter
+
+- name: Deploy static probe targets (router LAN + public anchors)
+  ansible.builtin.template:
+    src: targets_static.yml.j2
+    dest: /etc/prometheus/targets/static.yml
+    owner: prometheus
+    group: prometheus
+    mode: "0644"
+
+- name: Deploy Prometheus config
+  ansible.builtin.template:
+    src: prometheus.yml.j2
+    dest: /etc/prometheus/prometheus.yml
+    owner: prometheus
+    group: prometheus
+    mode: "0644"
+  notify: Reload prometheus
+
+- name: Deploy alert/classification rules
+  ansible.builtin.template:
+    src: outage_rules.yml.j2
+    dest: /etc/prometheus/rules/outage.yml
+    owner: prometheus
+    group: prometheus
+    mode: "0644"
+  notify: Reload prometheus
+
+- name: Deploy Alertmanager config (routes to ntfy)
+  ansible.builtin.template:
+    src: alertmanager.yml.j2
+    dest: /etc/alertmanager/alertmanager.yml
+    owner: prometheus
+    group: prometheus
+    mode: "0644"
+  notify: Restart alertmanager
+
+# ---------------------------------------------------------------------------
+# systemd units
+# ---------------------------------------------------------------------------
+- name: Deploy systemd units
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "/etc/systemd/system/{{ item }}"
+    mode: "0644"
+  loop:
+    - prometheus.service
+    - alertmanager.service
+    - blackbox_exporter.service
+  notify:
+    - Restart prometheus
+    - Restart alertmanager
+    - Restart blackbox_exporter
+
+# ---------------------------------------------------------------------------
+# Dynamic Spectrum gateway discovery (no router agent)
+# ---------------------------------------------------------------------------
+- name: Deploy gateway-discovery script
+  ansible.builtin.template:
+    src: discover-isp-gateway.sh.j2
+    dest: /usr/local/bin/discover-isp-gateway.sh
+    mode: "0755"
+
+- name: Deploy gateway-discovery systemd service + timer
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "/etc/systemd/system/{{ item }}"
+    mode: "0644"
+  loop:
+    - isp-gateway-discovery.service
+    - isp-gateway-discovery.timer
+  notify: Restart isp-gateway-discovery
+
+- name: Run gateway discovery once immediately
+  ansible.builtin.command: /usr/local/bin/discover-isp-gateway.sh
+  changed_when: false
+
+- name: Enable + start gateway-discovery timer
+  ansible.builtin.systemd:
+    name: isp-gateway-discovery.timer
+    enabled: yes
+    state: started
+    daemon_reload: yes
+
+# ---------------------------------------------------------------------------
+# Grafana + Loki + Promtail  (official Grafana apt repo)
+# ---------------------------------------------------------------------------
+- name: Add Grafana apt signing key
+  ansible.builtin.get_url:
+    url: https://apt.grafana.com/gpg.key
+    dest: /etc/apt/trusted.gpg.d/grafana.asc
+    mode: "0644"
+
+- name: Add Grafana apt repository
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/grafana.list
+    content: "deb [signed-by=/etc/apt/trusted.gpg.d/grafana.asc] https://apt.grafana.com stable main\n"
+  register: grafana_repo
+
+- name: Update apt cache after adding Grafana repo
+  apt:
+    update_cache: yes
+  when: grafana_repo.changed
+
+- name: Install Grafana, Loki, Promtail
+  apt:
+    name:
+      - grafana
+      - loki
+      - promtail
+    state: present
+
+- name: Configure Grafana Prometheus + Loki datasources (provisioning)
+  ansible.builtin.template:
+    src: grafana_datasources.yml.j2
+    dest: /etc/grafana/provisioning/datasources/hawkeye.yml
+    owner: root
+    group: grafana
+    mode: "0640"
+  notify: Restart grafana
+
+- name: Ensure all services enabled + started
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    enabled: yes
+    state: started
+    daemon_reload: yes
+  loop:
+    - blackbox_exporter
+    - prometheus
+    - alertmanager
+    - grafana-server
+    - loki
+    - promtail
+
+- name: Wait for Prometheus to be healthy
+  ansible.builtin.uri:
+    url: "http://{{ ansible_host }}:9090/-/healthy"
+    status_code: 200
+  register: prom_health
+  until: prom_health.status == 200
+  retries: 12
+  delay: 5

@@ -1,0 +1,14 @@
+# Static probe targets. Managed by Ansible (hawkeye role).
+# probe_role label drives the classification in outage_rules.yml.
+
+- targets:
+    - "{{ router_lan_ip }}"
+  labels:
+    probe_role: "router_lan"
+
+{% for anchor in public_anchors %}
+- targets:
+    - "{{ anchor }}"
+  labels:
+    probe_role: "public_anchor"
+{% endfor %}

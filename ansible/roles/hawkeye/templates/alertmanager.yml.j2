@@ -1,0 +1,30 @@
+# Managed by Ansible (hawkeye role).
+# Routes outage alerts to the ntfy LAN server. The phone app subscribes to
+# topic "{{ ntfy_outage_topic }}" over WiFi and receives both the firing
+# alert (live, during the outage) and the resolved notice (recovery flush).
+
+global:
+  resolve_timeout: 1m
+
+route:
+  receiver: ntfy-outage
+  group_by: ["outage_class"]
+  group_wait: 10s
+  group_interval: 30s
+  # Re-notify every 30m during a sustained outage so you are reminded.
+  repeat_interval: 30m
+  routes:
+    - matchers:
+        - severity = "critical"
+      receiver: ntfy-outage
+
+receivers:
+  - name: ntfy-outage
+    webhook_configs:
+      # ntfy accepts Alertmanager webhooks directly at /<topic>.
+      # send_resolved=true gives us the queue-and-flush recovery message:
+      # when connectivity returns, ntfy delivers the "[RESOLVED]" summary with
+      # the start + end timestamps of the outage.
+      - url: "http://{{ ntfy_ip }}/{{ ntfy_outage_topic }}?tpl=yes&title=Spectrum+Status"
+        send_resolved: true
+        max_alerts: 0

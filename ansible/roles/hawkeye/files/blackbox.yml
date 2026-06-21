@@ -1,0 +1,27 @@
+# blackbox_exporter modules used by Hawkeye.
+modules:
+  # ICMP ping - used for router LAN, Spectrum WAN gateway, public anchors.
+  icmp_v4:
+    prober: icmp
+    timeout: 5s
+    icmp:
+      preferred_ip_protocol: ip4
+      ip_protocol_fallback: false
+
+  # TCP connect to 1.1.1.1:443 - catches the case where ICMP is filtered but
+  # routing/peering is the real question. Belt-and-suspenders for the
+  # upstream/peering verdict.
+  tcp_connect:
+    prober: tcp
+    timeout: 5s
+    tcp:
+      preferred_ip_protocol: ip4
+
+  # HTTPS DoH probe - confirms full application-layer internet (DNS + TLS).
+  https_doh:
+    prober: http
+    timeout: 5s
+    http:
+      preferred_ip_protocol: ip4
+      valid_status_codes: [200, 400]
+      method: GET

@@ -1,0 +1,38 @@
+---
+- name: Restart prometheus
+  systemd:
+    name: prometheus
+    state: restarted
+    enabled: yes
+    daemon_reload: yes
+
+- name: Restart alertmanager
+  systemd:
+    name: alertmanager
+    state: restarted
+    enabled: yes
+    daemon_reload: yes
+
+- name: Restart blackbox_exporter
+  systemd:
+    name: blackbox_exporter
+    state: restarted
+    enabled: yes
+    daemon_reload: yes
+
+- name: Reload prometheus
+  ansible.builtin.command: "curl -sf -X POST http://127.0.0.1:9090/-/reload"
+  changed_when: false
+
+- name: Restart grafana
+  systemd:
+    name: grafana-server
+    state: restarted
+    enabled: yes
+
+- name: Restart isp-gateway-discovery
+  systemd:
+    name: isp-gateway-discovery.timer
+    state: restarted
+    enabled: yes
+    daemon_reload: yes

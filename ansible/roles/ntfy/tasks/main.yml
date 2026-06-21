@@ -1,0 +1,75 @@
+---
+# ntfy - LAN notification server. Isolated from the monitoring stack so that
+# a Hawkeye crash cannot take down the alert path. The phone app subscribes to
+# this server directly over WiFi, so alerts fire even during a Spectrum outage.
+
+- name: Install prerequisites
+  apt:
+    name:
+      - curl
+      - apt-transport-https
+      - gnupg
+    state: present
+    update_cache: yes
+
+- name: Add ntfy apt signing key
+  ansible.builtin.get_url:
+    url: https://archive.heckel.io/apt/pubkey.txt
+    dest: /etc/apt/trusted.gpg.d/ntfy.asc
+    mode: "0644"
+
+- name: Add ntfy apt repository
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/ntfy.list
+    content: "deb [arch=amd64 signed-by=/etc/apt/trusted.gpg.d/ntfy.asc] https://archive.heckel.io/apt debian main\n"
+  register: ntfy_repo
+
+- name: Update apt cache after adding ntfy repo
+  apt:
+    update_cache: yes
+  when: ntfy_repo.changed
+
+- name: Install ntfy
+  apt:
+    name: ntfy
+    state: present
+
+- name: Configure ntfy server (LAN-only, no auth, listen on :80)
+  ansible.builtin.copy:
+    dest: /etc/ntfy/server.yml
+    content: |
+      # Managed by Ansible (homelab role: ntfy)
+      base-url: "http://ntfy.snorp.dev"
+      listen-http: ":80"
+      # Pure-LAN: no cloud, no upstream relay, no auth.
+      # Anyone on the LAN can publish/subscribe. This is a private homelab net.
+      auth-default-access: "read-write"
+      # Keep messages around long enough to survive an outage + recovery window.
+      cache-file: "/var/cache/ntfy/cache.db"
+      cache-duration: "24h"
+      attachment-cache-dir: ""
+      behind-proxy: false
+  notify: Restart ntfy
+
+- name: Ensure ntfy cache dir exists
+  ansible.builtin.file:
+    path: /var/cache/ntfy
+    state: directory
+    owner: ntfy
+    group: ntfy
+    mode: "0755"
+
+- name: Ensure ntfy enabled and started
+  ansible.builtin.systemd:
+    name: ntfy
+    enabled: yes
+    state: started
+
+- name: Wait for ntfy to be reachable
+  ansible.builtin.uri:
+    url: "http://{{ ansible_host }}/v1/health"
+    status_code: 200
+  register: ntfy_health
+  until: ntfy_health.status == 200
+  retries: 12
+  delay: 5

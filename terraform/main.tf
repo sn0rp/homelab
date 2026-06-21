@@ -235,6 +235,146 @@ resource "proxmox_virtual_environment_container" "searxng" {
   }
 }
 
+resource "proxmox_virtual_environment_container" "hawkeye" {
+  node_name     = var.proxmox_node
+  vm_id         = 103
+  description   = "Hawkeye - monitoring stack (Prometheus/Alertmanager/blackbox/Grafana/Loki)"
+  started       = true
+  start_on_boot = true
+  unprivileged  = true
+
+  initialization {
+    hostname = "hawkeye.snorp.dev"
+    ip_config {
+      ipv4 {
+        address = "dhcp"
+      }
+    }
+    user_account {
+      password = var.hawkeye_root_password
+    }
+  }
+
+  cpu {
+    cores = 2
+  }
+
+  memory {
+    dedicated = 2048
+    swap      = 512
+  }
+
+  disk {
+    datastore_id = "local"
+    size         = 16
+  }
+
+  network_interface {
+    name   = "eth0"
+    bridge = "vmbr0"
+  }
+
+  operating_system {
+    template_file_id = "local:vztmpl/debian-13-standard_13.1-2_amd64.tar.zst"
+    type             = "debian"
+  }
+
+  features {
+    nesting = true
+    keyctl  = true
+  }
+
+  lifecycle {
+    ignore_changes = [
+      initialization[0].user_account,
+      initialization[0].ip_config,
+      operating_system[0].template_file_id,
+      description,
+      console,
+    ]
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      sleep 30
+      ansible-playbook -i ${path.module}/../ansible/inventory.yml \
+        ${path.module}/../ansible/site.yml \
+        --limit hawkeye \
+        --vault-password-file ${path.module}/../ansible/.vault_pass
+    EOT
+  }
+}
+
+resource "proxmox_virtual_environment_container" "ntfy" {
+  node_name     = var.proxmox_node
+  vm_id         = 104
+  description   = "ntfy - LAN notification server (alert path, isolated)"
+  started       = true
+  start_on_boot = true
+  unprivileged  = true
+
+  initialization {
+    hostname = "ntfy.snorp.dev"
+    ip_config {
+      ipv4 {
+        address = "dhcp"
+      }
+    }
+    user_account {
+      password = var.ntfy_root_password
+    }
+  }
+
+  cpu {
+    cores = 1
+  }
+
+  memory {
+    dedicated = 512
+    swap      = 512
+  }
+
+  disk {
+    datastore_id = "local"
+    size         = 4
+  }
+
+  network_interface {
+    name   = "eth0"
+    bridge = "vmbr0"
+  }
+
+  operating_system {
+    template_file_id = "local:vztmpl/debian-13-standard_13.1-2_amd64.tar.zst"
+    type             = "debian"
+  }
+
+  features {
+    nesting = true
+    keyctl  = true
+  }
+
+  lifecycle {
+    ignore_changes = [
+      initialization[0].user_account,
+      initialization[0].ip_config,
+      operating_system[0].template_file_id,
+      description,
+      console,
+    ]
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      sleep 30
+      ansible-playbook -i ${path.module}/../ansible/inventory.yml \
+        ${path.module}/../ansible/site.yml \
+        --limit ntfy \
+        --vault-password-file ${path.module}/../ansible/.vault_pass
+    EOT
+  }
+}
+
 resource "proxmox_virtual_environment_vm" "openclaw" {
   node_name = var.proxmox_node
   vm_id     = 200

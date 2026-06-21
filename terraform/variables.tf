@@ -34,3 +34,13 @@ variable "openclaw_root_password" {
   description = "Root/user password for OpenClaw VM"
   sensitive   = true
 }
+
+variable "hawkeye_root_password" {
+  description = "Root password for Hawkeye monitoring LXC"
+  sensitive   = true
+}
+
+variable "ntfy_root_password" {
+  description = "Root password for ntfy LXC"
+  sensitive   = true
+}

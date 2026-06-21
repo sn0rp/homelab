@@ -31,6 +31,14 @@ all:
           ansible_host: 192.168.8.140
           ansible_user: root
           lxc_id: 200
+        hawkeye:
+          ansible_host: 192.168.8.105   # TBD: confirm + reserve on router after first provision
+          ansible_user: root
+          lxc_id: 103
+        ntfy:
+          ansible_host: 192.168.8.106   # TBD: confirm + reserve on router after first provision
+          ansible_user: root
+          lxc_id: 104
 
     router_hosts:
       hosts:

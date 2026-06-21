@@ -11,13 +11,17 @@ TECH_PASS     = $(call vault_var,technitium_admin_password)
 PROV_PASS     = $(call vault_var,provisioning_root_password)
 SEARXNG_PASS  = $(call vault_var,searxng_root_password)
 OPENCLAW_PASS = $(call vault_var,openclaw_root_password)
+HAWKEYE_PASS  = $(call vault_var,hawkeye_root_password)
+NTFY_PASS     = $(call vault_var,ntfy_root_password)
 
 TF_FLAGS = \
   -var="proxmox_token_secret=$(TOKEN_SECRET)" \
   -var="technitium_admin_password=$(TECH_PASS)" \
   -var="provisioning_root_password=$(PROV_PASS)" \
   -var="searxng_root_password=$(SEARXNG_PASS)" \
-  -var="openclaw_root_password=$(OPENCLAW_PASS)"
+  -var="openclaw_root_password=$(OPENCLAW_PASS)" \
+  -var="hawkeye_root_password=$(HAWKEYE_PASS)" \
+  -var="ntfy_root_password=$(NTFY_PASS)"
 
 help:
 	@echo "homelab IaC"
@@ -73,4 +77,8 @@ test:
 	@echo -n "Provisioner health:  "; curl -sf http://provisioning.snorp.dev:8080/health > /dev/null && echo "OK" || echo "FAIL"
 	@echo -n "SearXNG:             "; curl -sf https://searx.snorp.dev/ > /dev/null && echo "OK" || echo "FAIL"
 	@echo -n "OpenClaw UI:         "; curl -sfk https://openclaw.snorp.dev > /dev/null && echo "OK" || echo "FAIL"
+	@echo -n "Grafana (Hawkeye):   "; curl -sf http://hawkeye.snorp.dev:3000/api/health > /dev/null && echo "OK" || echo "FAIL"
+	@echo -n "Prometheus:          "; curl -sf http://hawkeye.snorp.dev:9090/-/healthy > /dev/null && echo "OK" || echo "FAIL"
+	@echo -n "Alertmanager:        "; curl -sf http://hawkeye.snorp.dev:9093/-/healthy > /dev/null && echo "OK" || echo "FAIL"
+	@echo -n "ntfy:                "; curl -sf http://ntfy.snorp.dev/v1/health > /dev/null && echo "OK" || echo "FAIL"
 	@echo -n "DNS resolution:      "; nslookup proxmox.snorp.dev 192.168.8.104 > /dev/null 2>&1 && echo "OK" || echo "FAIL"

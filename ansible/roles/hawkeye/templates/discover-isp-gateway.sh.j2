@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# Managed by Ansible (homelab role: hawkeye)
+#
+# Discovers the current Spectrum WAN gateway WITHOUT touching the router and
+# WITHOUT hardcoding 98.26.78.1. From Hawkeye's vantage point the path is:
+#   Hawkeye -> {{ router_lan_ip }} (your router) -> <Spectrum gateway> -> internet
+# So the SECOND hop toward a public anchor is the Spectrum edge. We take the
+# first PUBLIC (non-RFC1918) hop on the traceroute, which is the ISP gateway.
+#
+# Output: a Prometheus file-SD JSON at /etc/prometheus/targets/isp_gateway.yml
+# with target = discovered gateway and a stable instance label "isp_gateway".
+# If discovery fails (e.g. full outage where no hop answers), we DO NOT
+# overwrite the last-known-good file - the stale target stays, so blackbox
+# keeps probing the last known gateway and correctly reports it down.
+
+set -euo pipefail
+
+ANCHOR="1.1.1.1"
+ROUTER="{{ router_lan_ip }}"
+OUT="/etc/prometheus/targets/isp_gateway.yml"
+TMP="$(mktemp)"
+
+is_public() {
+  # returns 0 if the IP is a routable public v4 address (not RFC1918/loopback/CGNAT-ish)
+  local ip="$1"
+  case "$ip" in
+    10.*|192.168.*|127.*|169.254.*|0.*) return 1 ;;
+    172.1[6-9].*|172.2[0-9].*|172.3[0-1].*) return 1 ;;
+    100.6[4-9].*|100.[7-9][0-9].*|100.1[0-1][0-9].*|100.12[0-7].*) return 1 ;; # CGNAT 100.64/10
+    "") return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
+gw=""
+# traceroute, numeric, max 5 hops, 1 query/hop, short waits.
+while read -r line; do
+  hop_ip=$(echo "$line" | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | head -n1 || true)
+  [ -z "$hop_ip" ] && continue
+  [ "$hop_ip" = "$ROUTER" ] && continue   # skip our own router
+  if is_public "$hop_ip"; then
+    gw="$hop_ip"
+    break
+  fi
+done < <(traceroute -n -q 1 -w 2 -m 5 "$ANCHOR" 2>/dev/null || true)
+
+if [ -n "$gw" ]; then
+  cat > "$TMP" <<EOF
+- targets:
+    - "$gw"
+  labels:
+    probe_role: "isp_gateway"
+EOF
+  install -m 0644 -o prometheus -g prometheus "$TMP" "$OUT"
+  rm -f "$TMP"
+  echo "discovered Spectrum gateway: $gw"
+else
+  rm -f "$TMP"
+  echo "discovery failed (likely outage); keeping last-known gateway target" >&2
+  # leave $OUT untouched on purpose
+fi

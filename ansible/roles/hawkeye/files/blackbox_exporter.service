@@ -1,0 +1,18 @@
+[Unit]
+Description=Prometheus blackbox exporter
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+User=root
+Group=root
+Type=simple
+# root required so ICMP probes can open raw sockets (or grant CAP_NET_RAW).
+ExecStart=/usr/local/bin/blackbox_exporter \
+  --config.file=/etc/blackbox_exporter/blackbox.yml \
+  --web.listen-address=0.0.0.0:9115
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
