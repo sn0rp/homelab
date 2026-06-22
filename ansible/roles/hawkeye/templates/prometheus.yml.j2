@@ -36,6 +36,31 @@ scrape_configs:
       - target_label: __address__
         replacement: 127.0.0.1:9115
 
+  # Proxmox host node_exporter (CPU/RAM/temps/disk/SMART textfile).
+  - job_name: node_proxmox
+    static_configs:
+      - targets: ["{{ proxmox_ip }}:9100"]
+        labels:
+          host: "proxmox"
+
+  # Proxmox VE exporter (per-VM/LXC + node + storage).
+  - job_name: pve
+    static_configs:
+      - targets: ["{{ proxmox_ip }}:9221"]
+    metrics_path: /pve
+    params:
+      module: [default]
+      cluster: ["1"]
+      node: ["1"]
+
+  # TrueNAS metrics, via graphite_exporter (TrueNAS pushes Graphite -> :2003,
+  # exporter re-exposes Prometheus on :9108). honor_labels so the host label
+  # from the mapping config is preserved.
+  - job_name: truenas_graphite
+    honor_labels: true
+    static_configs:
+      - targets: ["127.0.0.1:{{ graphite_metrics_port }}"]
+
   # Application-layer internet check: TCP+TLS to a public anchor.
   - job_name: blackbox_tcp_internet
     metrics_path: /probe

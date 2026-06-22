@@ -129,6 +129,15 @@
     mode: "0644"
   notify: Reload prometheus
 
+- name: Deploy infra (Proxmox + NAS hardware) alert rules
+  ansible.builtin.template:
+    src: infra_rules.yml.j2
+    dest: /etc/prometheus/rules/infra.yml
+    owner: prometheus
+    group: prometheus
+    mode: "0644"
+  notify: Reload prometheus
+
 - name: Deploy Alertmanager config (routes to ntfy)
   ansible.builtin.template:
     src: alertmanager.yml.j2
@@ -247,6 +256,60 @@
     mode: "0640"
   notify: Restart grafana
 
+# ---------------------------------------------------------------------------
+# graphite_exporter  (TrueNAS metrics: TrueNAS pushes Graphite -> we scrape)
+# ---------------------------------------------------------------------------
+# TrueNAS Community Edition does not expose Prometheus metrics natively; it
+# pushes collectd/Graphite. graphite_exporter receives that carbon stream on
+# 2003 and re-exposes it as Prometheus metrics on 9108, remapped via a mapping
+# config. Enable it in TrueNAS: System > Reporting > set destination to
+# hawkeye:2003 (Graphite).
+- name: Create graphite_exporter system user
+  ansible.builtin.user:
+    name: graphite_exporter
+    system: yes
+    shell: /usr/sbin/nologin
+    create_home: no
+
+- name: Download + unpack graphite_exporter
+  ansible.builtin.unarchive:
+    src: "https://github.com/prometheus/graphite_exporter/releases/download/v{{ graphite_exporter_version }}/graphite_exporter-{{ graphite_exporter_version }}.{{ prometheus_arch }}.tar.gz"
+    dest: /usr/local/bin
+    remote_src: yes
+    extra_opts: ["--strip-components=1", "--wildcards", "*/graphite_exporter"]
+    creates: /usr/local/bin/graphite_exporter
+
+- name: Deploy graphite_exporter mapping config
+  ansible.builtin.template:
+    src: graphite_mapping.yml.j2
+    dest: /etc/graphite_exporter_mapping.yml
+    owner: graphite_exporter
+    group: graphite_exporter
+    mode: "0644"
+  notify: Restart graphite_exporter
+
+- name: Deploy graphite_exporter systemd unit
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/graphite_exporter.service
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Graphite exporter (TrueNAS metrics bridge)
+      Wants=network-online.target
+      After=network-online.target
+      [Service]
+      User=graphite_exporter
+      Group=graphite_exporter
+      Type=simple
+      ExecStart=/usr/local/bin/graphite_exporter \
+        --graphite.mapping-config=/etc/graphite_exporter_mapping.yml \
+        --graphite.listen-address=:{{ graphite_carbon_port }} \
+        --web.listen-address=:{{ graphite_metrics_port }}
+      Restart=on-failure
+      [Install]
+      WantedBy=multi-user.target
+  notify: Restart graphite_exporter
+
 - name: Ensure all services enabled + started
   ansible.builtin.systemd:
     name: "{{ item }}"
@@ -260,6 +323,7 @@
     - grafana-server
     - loki
     - promtail
+    - graphite_exporter
 
 - name: Wait for Prometheus to be healthy
   ansible.builtin.uri:

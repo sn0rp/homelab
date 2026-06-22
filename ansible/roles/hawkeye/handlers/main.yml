@@ -41,3 +41,10 @@
   systemd:
     name: nginx
     state: reloaded
+
+- name: Restart graphite_exporter
+  systemd:
+    name: graphite_exporter
+    state: restarted
+    enabled: yes
+    daemon_reload: yes

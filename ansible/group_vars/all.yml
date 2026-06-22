@@ -25,6 +25,13 @@ public_anchors:
 
 # ntfy topic the phone subscribes to for outage alerts
 ntfy_outage_topic: spectrum-outage
+
+# --- Observability exporters (Proxmox + NAS) ---
+# node_exporter + pve_exporter run on the Proxmox host; graphite_exporter runs
+# on Hawkeye to receive TrueNAS Graphite pushes. Scraped by Prometheus.
+pve_exporter_user: "monitoring@pve"
+pve_exporter_token_name: "exporter"
+# pve_exporter_token_secret is supplied via vault.yml (created on first run).
 searxng_port: 8888
 technitium_lxc_id: 100
 provisioning_lxc_id: 101

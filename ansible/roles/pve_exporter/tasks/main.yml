@@ -1,0 +1,101 @@
+---
+# prometheus-pve-exporter on the Proxmox host. Gives per-guest (VM/LXC) status,
+# CPU, memory, disk, uptime, plus node and storage-pool metrics - turning the
+# LXCs from black boxes into observable services.
+
+# --- PVE API auth: a dedicated read-only monitoring user + API token ---
+# PVEAuditor is read-only. Token creation is idempotent via pveum; we ignore
+# "already exists" errors. The secret is only shown at creation, so it must be
+# provided via vault (pve_exporter_token_secret) and matched here.
+- name: Create monitoring PVE user (read-only)
+  ansible.builtin.command: >
+    pveum user add {{ pve_exporter_user }} --comment "Prometheus exporter (read-only)"
+  register: pve_user_add
+  changed_when: "'already exists' not in (pve_user_add.stderr | default(''))"
+  failed_when: >
+    pve_user_add.rc != 0 and 'already exists' not in (pve_user_add.stderr | default(''))
+
+- name: Grant PVEAuditor role to monitoring user
+  ansible.builtin.command: >
+    pveum acl modify / --users {{ pve_exporter_user }} --roles PVEAuditor
+  changed_when: false
+
+- name: Ensure API token exists for monitoring user
+  ansible.builtin.command: >
+    pveum user token add {{ pve_exporter_user }} {{ pve_exporter_token_name }}
+    --privsep 0 --comment "prometheus-pve-exporter"
+  register: pve_token_add
+  changed_when: "'already exists' not in (pve_token_add.stderr | default(''))"
+  failed_when: >
+    pve_token_add.rc != 0 and 'already exists' not in (pve_token_add.stderr | default(''))
+
+- name: Warn if a freshly created token secret was emitted
+  ansible.builtin.debug:
+    msg: >
+      A NEW PVE API token was just created. Capture its secret and store it in
+      vault as pve_exporter_token_secret, then re-run. Output: {{ pve_token_add.stdout }}
+  when: pve_token_add.changed
+
+# --- Install the exporter in a venv ---
+- name: Install python venv + pip
+  ansible.builtin.apt:
+    name:
+      - python3-venv
+      - python3-pip
+    state: present
+    update_cache: yes
+
+- name: Create pve_exporter venv
+  ansible.builtin.command: "python3 -m venv {{ pve_exporter_venv }}"
+  args:
+    creates: "{{ pve_exporter_venv }}/bin/python"
+
+- name: Install prometheus-pve-exporter into venv
+  ansible.builtin.pip:
+    name: "prometheus-pve-exporter=={{ pve_exporter_version }}"
+    virtualenv: "{{ pve_exporter_venv }}"
+    state: present
+
+- name: Create pve_exporter system user
+  ansible.builtin.user:
+    name: pve_exporter
+    system: yes
+    shell: /usr/sbin/nologin
+    create_home: no
+
+- name: Deploy pve_exporter auth config
+  ansible.builtin.template:
+    src: pve.yml.j2
+    dest: /etc/pve_exporter.yml
+    owner: pve_exporter
+    group: pve_exporter
+    mode: "0640"
+  notify: Restart pve_exporter
+
+- name: Deploy pve_exporter systemd unit
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/pve_exporter.service
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Prometheus PVE exporter
+      Wants=network-online.target
+      After=network-online.target
+      [Service]
+      User=pve_exporter
+      Group=pve_exporter
+      Type=simple
+      ExecStart={{ pve_exporter_venv }}/bin/pve_exporter \
+        --config.file=/etc/pve_exporter.yml \
+        --web.listen-address=:{{ pve_exporter_port }}
+      Restart=on-failure
+      [Install]
+      WantedBy=multi-user.target
+  notify: Restart pve_exporter
+
+- name: Enable + start pve_exporter
+  ansible.builtin.systemd:
+    name: pve_exporter
+    enabled: yes
+    state: started
+    daemon_reload: yes

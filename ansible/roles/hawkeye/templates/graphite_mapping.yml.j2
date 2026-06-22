@@ -1,0 +1,119 @@
+# Managed by Ansible (hawkeye role).
+# graphite_exporter mapping: TrueNAS collectd/Graphite metric names -> Prometheus.
+#
+# TrueNAS pushes metrics namespaced as:  servers.<hostname>.<plugin>...
+# where <hostname> has its dots replaced by underscores. nas.snorp.dev becomes
+# nas_snorp_dev, BUT collectd typically only emits the short hostname ("nas").
+# Both forms are handled below; the trailing catch-all guarantees nothing is
+# silently dropped while we confirm the exact namespace this TrueNAS version
+# emits (inspect with: curl -s localhost:9108/metrics | grep -i nas | less).
+#
+# Validate:
+#   graphite_exporter --check-config \
+#     --graphite.mapping-config=/etc/graphite_exporter_mapping.yml
+#
+# Mapping syntax follows statsd_exporter regex matching.
+
+mappings:
+  # ---- Disk temperatures (per drive) -- the Ironwolf 60C watch lives here ----
+  - match: 'servers\.(.*)\.disktemp-(.*)\.temperature'
+    match_type: regex
+    name: 'truenas_disk_temperature_celsius'
+    labels:
+      host: '${1}'
+      disk: '${2}'
+
+  # ---- CPU temperatures ----
+  - match: 'servers\.(.*)\.cputemp-(.*)\.temperature'
+    match_type: regex
+    name: 'truenas_cpu_temperature_celsius'
+    labels:
+      host: '${1}'
+      cpu: '${2}'
+
+  # ---- CPU usage (default: jiffies per mode) ----
+  - match: 'servers\.(.*)\.cpu-(.*)\.cpu-(.*)'
+    match_type: regex
+    name: 'truenas_cpu_usage'
+    labels:
+      host: '${1}'
+      cpu: '${2}'
+      mode: '${3}'
+
+  # ---- CPU aggregate percent ----
+  - match: 'servers\.(.*)\.aggregation-cpu-(.*)\.percent-(.*)'
+    match_type: regex
+    name: 'truenas_cpu_percent'
+    labels:
+      host: '${1}'
+      aggregation: '${2}'
+      mode: '${3}'
+
+  # ---- Memory ----
+  - match: 'servers\.(.*)\.memory\.memory-(.*)'
+    match_type: regex
+    name: 'truenas_memory_bytes'
+    labels:
+      host: '${1}'
+      state: '${2}'
+
+  # ---- Filesystem / dataset usage (df plugin) ----
+  - match: 'servers\.(.*)\.df-(.*)\.df_complex-(.*)'
+    match_type: regex
+    name: 'truenas_df_bytes'
+    labels:
+      host: '${1}'
+      filesystem: '${2}'
+      state: '${3}'
+
+  # ---- ZFS pool / ARC (presence depends on version; catch-all backstops it) ----
+  - match: 'servers\.(.*)\.zfs_arc\.(.*)'
+    match_type: regex
+    name: 'truenas_zfs_arc'
+    labels:
+      host: '${1}'
+      metric: '${2}'
+
+  # ---- Per-disk I/O ----
+  - match: 'servers\.(.*)\.disk-(.*)\.disk_(.*)\.(.*)'
+    match_type: regex
+    name: 'truenas_disk_${3}'
+    labels:
+      host: '${1}'
+      device: '${2}'
+      direction: '${4}'
+
+  # ---- Network interfaces ----
+  - match: 'servers\.(.*)\.interface-(.*)\.if_(.*)\.(.*)'
+    match_type: regex
+    name: 'truenas_interface_${3}'
+    labels:
+      host: '${1}'
+      interface: '${2}'
+      direction: '${4}'
+
+  # ---- Load average ----
+  - match: 'servers\.(.*)\.load\.load\.shortterm'
+    match_type: regex
+    name: 'truenas_load1'
+    labels:
+      host: '${1}'
+  - match: 'servers\.(.*)\.load\.load\.midterm'
+    match_type: regex
+    name: 'truenas_load5'
+    labels:
+      host: '${1}'
+  - match: 'servers\.(.*)\.load\.load\.longterm'
+    match_type: regex
+    name: 'truenas_load15'
+    labels:
+      host: '${1}'
+
+  # ---- CATCH-ALL: keep every other TrueNAS metric so we can inspect the raw
+  #      namespace and refine the mappings above. The full dotted path lands in
+  #      the `graphite_name` label. Remove or tighten once mappings are final. ----
+  - match: 'servers\.(.*)'
+    match_type: regex
+    name: 'truenas_unmapped'
+    labels:
+      graphite_name: '${1}'

@@ -1,0 +1,8 @@
+# Managed by Ansible (pve_exporter role).
+# prometheus-pve-exporter auth config. Uses an API token (no password) for the
+# read-only monitoring user. The exporter queries the local PVE API over HTTPS.
+default:
+    user: "{{ pve_exporter_user }}"
+    token_name: "{{ pve_exporter_token_name }}"
+    token_value: "{{ pve_exporter_token_secret }}"
+    verify_ssl: false

@@ -1,0 +1,12 @@
+---
+# prometheus-pve-exporter: exposes per-VM/LXC and node/storage metrics by
+# querying the Proxmox VE API. Runs on the Proxmox host itself, querying
+# localhost. Scraped by Prometheus on Hawkeye.
+pve_exporter_port: 9221
+pve_exporter_venv: /opt/pve_exporter
+pve_exporter_version: "3.5.5"
+
+# PVE API user + token for the exporter (read-only PVEAuditor role).
+# The token secret is supplied via vault as pve_exporter_token_secret.
+pve_exporter_user: "monitoring@pve"
+pve_exporter_token_name: "exporter"

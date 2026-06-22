@@ -1,0 +1,146 @@
+# Managed by Ansible (hawkeye role).
+# Hardware / infrastructure alerts for Proxmox + TrueNAS NAS. Routed to ntfy
+# via Alertmanager (severity=critical). Thresholds per Benj's hardware:
+#   - Seagate Ironwolf 8TB: datasheet max 65C, "not recommended" sustained >60C
+#   - NVMe: throttles ~70C+
+#   - ZFS: performance degrades badly past ~80-90% capacity
+#
+# NOTE: NAS metric names (truenas_*) depend on the graphite_exporter mapping
+# and are confirmed against the live Graphite stream before these fire usefully.
+# Rules referencing not-yet-confirmed metrics simply never fire until the
+# metric exists, so they are safe to ship.
+
+groups:
+  - name: infra_proxmox
+    rules:
+      # ---- Proxmox host down ----
+      - alert: ProxmoxHostDown
+        expr: up{job="node_proxmox"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          outage_class: infra
+        annotations:
+          summary: "Proxmox host node_exporter is down"
+          description: "node_exporter on the Proxmox host has been unreachable for 2m. The host may be down or node_exporter crashed."
+
+      # ---- PVE exporter down (guests become invisible) ----
+      - alert: PVEExporterDown
+        expr: up{job="pve"} == 0
+        for: 5m
+        labels:
+          severity: warning
+          outage_class: infra
+        annotations:
+          summary: "Proxmox VE exporter is down"
+          description: "pve_exporter has been unreachable for 5m; per-VM/LXC metrics are stale."
+
+      # ---- A VM/LXC that should be running is stopped ----
+      - alert: PVEGuestStopped
+        expr: pve_up == 0
+        for: 5m
+        labels:
+          severity: warning
+          outage_class: infra
+        annotations:
+          summary: "Proxmox guest stopped: {{ '{{' }} $labels.id {{ '}}' }}"
+          description: "Guest {{ '{{' }} $labels.id {{ '}}' }} ({{ '{{' }} $labels.name {{ '}}' }}) has been down for 5m."
+
+      # ---- Root filesystem filling (single NVMe runs everything) ----
+      - alert: ProxmoxRootDiskFull
+        expr: (1 - (node_filesystem_avail_bytes{job="node_proxmox",mountpoint="/"} / node_filesystem_size_bytes{job="node_proxmox",mountpoint="/"})) * 100 > 85
+        for: 10m
+        labels:
+          severity: warning
+          outage_class: infra
+        annotations:
+          summary: "Proxmox root filesystem >85% full"
+          description: "The Proxmox boot NVMe root filesystem is over 85% full. This single drive runs everything - clean up before it fills."
+
+      - alert: ProxmoxRootDiskCritical
+        expr: (1 - (node_filesystem_avail_bytes{job="node_proxmox",mountpoint="/"} / node_filesystem_size_bytes{job="node_proxmox",mountpoint="/"})) * 100 > 95
+        for: 5m
+        labels:
+          severity: critical
+          outage_class: infra
+        annotations:
+          summary: "Proxmox root filesystem >95% full"
+          description: "CRITICAL: Proxmox boot NVMe root filesystem over 95% full. Services will start failing."
+
+      # ---- SMART overall health failed (any disk, Proxmox) ----
+      - alert: ProxmoxDiskSmartFailed
+        expr: smartmon_device_smart_healthy == 0
+        for: 1m
+        labels:
+          severity: critical
+          outage_class: infra
+        annotations:
+          summary: "SMART health FAILED on Proxmox disk {{ '{{' }} $labels.disk {{ '}}' }}"
+          description: "smartctl reports overall-health FAILED on {{ '{{' }} $labels.disk {{ '}}' }}. Drive may be dying - back up now."
+
+      # ---- NVMe wear / reallocated sectors ----
+      - alert: ProxmoxNvmeWearHigh
+        expr: smartmon_nvme_percentage_used > 80
+        for: 1h
+        labels:
+          severity: warning
+          outage_class: infra
+        annotations:
+          summary: "Proxmox NVMe wear >80% ({{ '{{' }} $labels.disk {{ '}}' }})"
+          description: "NVMe endurance indicator over 80% used. Plan a replacement."
+
+      - alert: ProxmoxReallocatedSectors
+        expr: smartmon_attr_value{name="reallocated_sector_ct"} > 0
+        for: 5m
+        labels:
+          severity: warning
+          outage_class: infra
+        annotations:
+          summary: "Reallocated sectors on Proxmox disk {{ '{{' }} $labels.disk {{ '}}' }}"
+          description: "Reallocated sector count is nonzero and may indicate developing drive failure."
+
+      # ---- NVMe temperature (Proxmox + any node_exporter NVMe via SMART) ----
+      - alert: ProxmoxNvmeHot
+        expr: smartmon_device_temperature_celsius > 75
+        for: 5m
+        labels:
+          severity: critical
+          outage_class: infra
+        annotations:
+          summary: "Proxmox drive hot: {{ '{{' }} $labels.disk {{ '}}' }} at {{ '{{' }} $value {{ '}}' }}C"
+          description: "Drive temperature over 75C for 5m. Check airflow."
+
+  - name: infra_nas
+    rules:
+      # ---- Ironwolf HDD temperature (datasheet: >60C not recommended) ----
+      - alert: NasDiskWarm
+        expr: truenas_disk_temperature_celsius > 55
+        for: 10m
+        labels:
+          severity: warning
+          outage_class: infra
+        annotations:
+          summary: "NAS disk warm: {{ '{{' }} $labels.disk {{ '}}' }} at {{ '{{' }} $value {{ '}}' }}C"
+          description: "Ironwolf drive over 55C for 10m. Datasheet warns against sustained operation above 60C."
+
+      - alert: NasDiskHot
+        expr: truenas_disk_temperature_celsius > 60
+        for: 5m
+        labels:
+          severity: critical
+          outage_class: infra
+        annotations:
+          summary: "NAS disk HOT: {{ '{{' }} $labels.disk {{ '}}' }} at {{ '{{' }} $value {{ '}}' }}C"
+          description: "Ironwolf drive over 60C - Seagate's 'not recommended' sustained threshold. Drive health may be affected. Check NAS cooling."
+
+      # ---- ZFS pool capacity (placeholder metric; confirm exact name from
+      #      the live Graphite stream, then tighten this expr) ----
+      - alert: NasPoolNearFull
+        expr: truenas_df_bytes{state="used"} / (truenas_df_bytes{state="used"} + truenas_df_bytes{state="free"}) * 100 > 80
+        for: 30m
+        labels:
+          severity: warning
+          outage_class: infra
+        annotations:
+          summary: "NAS pool {{ '{{' }} $labels.filesystem {{ '}}' }} >80% full"
+          description: "ZFS performance degrades badly past ~80-90% capacity. Consider cleanup or expansion."

@@ -1,0 +1,13 @@
+---
+# Pinned upstream version (official Prometheus release tarball).
+node_exporter_version: "1.9.1"
+node_exporter_arch: linux-amd64
+
+node_exporter_port: 9100
+
+# Textfile collector dir - smartmon writes SMART metrics here for node_exporter
+# to pick up. This is how we get drive health without a separate exporter.
+node_exporter_textfile_dir: /var/lib/node_exporter/textfile_collector
+
+# How often the smartmon SMART-collection script runs (systemd timer).
+smartmon_interval: "*:0/15"  # every 15 minutes

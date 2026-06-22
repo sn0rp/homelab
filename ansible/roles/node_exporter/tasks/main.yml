@@ -1,0 +1,118 @@
+---
+# node_exporter: host-level metrics (CPU, RAM, load, filesystem, network,
+# hwmon/thermal temperatures) plus a smartmon textfile collector for SMART
+# drive health. Installed on the Proxmox host.
+
+- name: Install smartmontools (for SMART drive health)
+  ansible.builtin.apt:
+    name: smartmontools
+    state: present
+    update_cache: yes
+
+- name: Create node_exporter system user
+  ansible.builtin.user:
+    name: node_exporter
+    system: yes
+    shell: /usr/sbin/nologin
+    create_home: no
+
+- name: Create textfile collector directory
+  ansible.builtin.file:
+    path: "{{ node_exporter_textfile_dir }}"
+    state: directory
+    owner: node_exporter
+    group: node_exporter
+    mode: "0755"
+
+- name: Download + unpack node_exporter
+  ansible.builtin.unarchive:
+    src: "https://github.com/prometheus/node_exporter/releases/download/v{{ node_exporter_version }}/node_exporter-{{ node_exporter_version }}.{{ node_exporter_arch }}.tar.gz"
+    dest: /usr/local/bin
+    remote_src: yes
+    extra_opts: ["--strip-components=1", "--wildcards", "*/node_exporter"]
+    creates: /usr/local/bin/node_exporter
+  notify: Restart node_exporter
+
+- name: Deploy node_exporter systemd unit
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/node_exporter.service
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Prometheus node_exporter
+      Wants=network-online.target
+      After=network-online.target
+      [Service]
+      User=node_exporter
+      Group=node_exporter
+      Type=simple
+      # Enable hwmon (temps), thermal_zone (temps), and the textfile collector
+      # (SMART). Defaults are otherwise fine.
+      ExecStart=/usr/local/bin/node_exporter \
+        --web.listen-address=:{{ node_exporter_port }} \
+        --collector.textfile.directory={{ node_exporter_textfile_dir }} \
+        --collector.hwmon \
+        --collector.thermal_zone
+      Restart=on-failure
+      [Install]
+      WantedBy=multi-user.target
+  notify: Restart node_exporter
+
+# --- smartmon textfile collector: scrape SMART data into Prometheus format ---
+- name: Deploy smartmon collection script
+  ansible.builtin.copy:
+    src: smartmon.sh
+    dest: /usr/local/bin/smartmon.sh
+    mode: "0755"
+
+- name: Deploy smartmon systemd service + timer
+  ansible.builtin.copy:
+    dest: "/etc/systemd/system/{{ item.name }}"
+    mode: "0644"
+    content: "{{ item.content }}"
+  loop:
+    - name: smartmon.service
+      content: |
+        [Unit]
+        Description=Collect SMART metrics for node_exporter textfile collector
+        [Service]
+        Type=oneshot
+        ExecStart=/bin/bash -c '/usr/local/bin/smartmon.sh > {{ node_exporter_textfile_dir }}/smartmon.prom.$$ && mv {{ node_exporter_textfile_dir }}/smartmon.prom.$$ {{ node_exporter_textfile_dir }}/smartmon.prom'
+    - name: smartmon.timer
+      content: |
+        [Unit]
+        Description=Run smartmon collection periodically
+        [Timer]
+        OnCalendar={{ smartmon_interval }}
+        Persistent=true
+        [Install]
+        WantedBy=timers.target
+  notify: Restart node_exporter
+
+- name: Enable + start node_exporter
+  ansible.builtin.systemd:
+    name: node_exporter
+    enabled: yes
+    state: started
+    daemon_reload: yes
+
+- name: Run smartmon once immediately
+  ansible.builtin.systemd:
+    name: smartmon.service
+    state: started
+    daemon_reload: yes
+
+- name: Enable + start smartmon timer
+  ansible.builtin.systemd:
+    name: smartmon.timer
+    enabled: yes
+    state: started
+
+- name: Wait for node_exporter to be healthy
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ node_exporter_port }}/metrics"
+    status_code: 200
+  register: ne_health
+  until: ne_health.status == 200
+  retries: 6
+  delay: 3

@@ -3,6 +3,13 @@
 prometheus_version: "3.12.0"
 alertmanager_version: "0.33.0"
 blackbox_version: "0.28.0"
+graphite_exporter_version: "0.16.0"
+
+# graphite_exporter: TrueNAS pushes Graphite/carbon metrics here; this exporter
+# translates them to Prometheus. Carbon plaintext listener must be 2003 (the
+# Graphite default) to match TrueNAS Reporting. HTTP metrics on 9108.
+graphite_carbon_port: 2003
+graphite_metrics_port: 9108
 
 prometheus_arch: linux-amd64
 

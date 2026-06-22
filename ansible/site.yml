@@ -16,6 +16,16 @@
     - role: proxmox_cert_sync
       tags: cert, proxmox
 
+- name: Proxmox host - monitoring exporters
+  hosts: proxmox_hosts
+  vars_files:
+    - vault.yml
+  roles:
+    - role: node_exporter
+      tags: monitoring, node_exporter, proxmox
+    - role: pve_exporter
+      tags: monitoring, pve_exporter, proxmox
+
 - name: Technitium LXC
   hosts: technitium
   vars_files:
