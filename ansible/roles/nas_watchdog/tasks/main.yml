@@ -1,0 +1,100 @@
+---
+# nas_watchdog: Hawkeye-side ZFS-health + disk-temp watchdog for the TrueNAS box.
+# Runs on the hawkeye host (same place as Prometheus/Alertmanager).
+
+# --- Ensure Hawkeye has an SSH keypair (reuse the one made for router discovery) ---
+- name: Ensure Hawkeye SSH keypair exists
+  ansible.builtin.user:
+    name: root
+    generate_ssh_key: yes
+    ssh_key_type: ed25519
+    ssh_key_file: .ssh/id_ed25519
+
+- name: Read Hawkeye public key
+  ansible.builtin.slurp:
+    src: /root/.ssh/id_ed25519.pub
+  register: hawkeye_pub
+
+# --- Authorize that key on the TrueNAS 'snorp' user via midclt (appliance-safe) ---
+# TrueNAS owns authorized_keys; we must set keys through user.update, not by
+# editing the file. We fetch the user's current sshpubkey, append ours if absent,
+# and write the merged set back. The bootstrap SSH session uses the key the
+# operator (Benj) already authorized for snorp - delegated via local ssh.
+- name: Fetch current snorp sshpubkey from TrueNAS
+  ansible.builtin.command: >
+    ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new
+    {{ nas_ssh_user }}@{{ nas_ssh_host }}
+    midclt call user.query '[["username","=","{{ nas_ssh_user }}"]]'
+  register: nas_user_q
+  changed_when: false
+
+- name: Compute merged authorized key set
+  ansible.builtin.set_fact:
+    nas_existing_pubkey: "{{ (nas_user_q.stdout | from_json)[0].sshpubkey | default('') }}"
+    hawkeye_pubkey_line: "{{ hawkeye_pub.content | b64decode | trim }}"
+
+- name: Authorize Hawkeye key on TrueNAS snorp user (idempotent, preserves existing)
+  ansible.builtin.command: >
+    ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new
+    {{ nas_ssh_user }}@{{ nas_ssh_host }}
+    midclt call user.update {{ (nas_user_q.stdout | from_json)[0].id }}
+    '{{ {"sshpubkey": (nas_existing_pubkey ~ "\n" ~ hawkeye_pubkey_line) | trim} | to_json }}'
+  when: hawkeye_pubkey_line not in nas_existing_pubkey
+  register: nas_key_auth
+  changed_when: nas_key_auth.rc == 0
+
+- name: Pre-seed NAS host key into Hawkeye known_hosts (non-interactive ssh)
+  ansible.builtin.shell: >
+    ssh-keyscan -H {{ nas_ssh_host }} >> /root/.ssh/known_hosts 2>/dev/null;
+    sort -u /root/.ssh/known_hosts -o /root/.ssh/known_hosts
+  changed_when: false
+
+# --- Deploy the watchdog ---
+- name: Create watchdog state dir
+  ansible.builtin.file:
+    path: "{{ nas_watchdog_state | dirname }}"
+    state: directory
+    mode: "0755"
+
+- name: Deploy nas_watchdog script
+  ansible.builtin.template:
+    src: nas_watchdog.py.j2
+    dest: /usr/local/bin/nas_watchdog.py
+    mode: "0755"
+
+- name: Deploy nas_watchdog systemd service + timer
+  ansible.builtin.copy:
+    dest: "/etc/systemd/system/{{ item.name }}"
+    mode: "0644"
+    content: "{{ item.content }}"
+  loop:
+    - name: nas_watchdog.service
+      content: |
+        [Unit]
+        Description=TrueNAS ZFS health + disk temp watchdog (-> ntfy)
+        Wants=network-online.target
+        After=network-online.target
+        [Service]
+        Type=oneshot
+        ExecStart=/usr/local/bin/nas_watchdog.py
+    - name: nas_watchdog.timer
+      content: |
+        [Unit]
+        Description=Run TrueNAS watchdog periodically
+        [Timer]
+        OnCalendar={{ nas_watchdog_interval }}
+        Persistent=true
+        [Install]
+        WantedBy=timers.target
+  notify: Reload systemd
+
+- name: Run watchdog once immediately (seeds state, sends nothing if all healthy)
+  ansible.builtin.command: /usr/local/bin/nas_watchdog.py
+  changed_when: false
+
+- name: Enable + start watchdog timer
+  ansible.builtin.systemd:
+    name: nas_watchdog.timer
+    enabled: yes
+    state: started
+    daemon_reload: yes

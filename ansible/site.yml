@@ -81,3 +81,5 @@
   roles:
     - role: hawkeye
       tags: hawkeye
+    - role: nas_watchdog
+      tags: hawkeye, nas_watchdog, monitoring

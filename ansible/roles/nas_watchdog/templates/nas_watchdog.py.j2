@@ -1,0 +1,181 @@
+#!/usr/bin/env python3
+# Managed by Ansible (nas_watchdog role).
+# Runs on Hawkeye. SSHes to TrueNAS as a low-priv user, calls midclt for ZFS
+# pool health and disk temperatures, and pushes EDGE-TRIGGERED alerts to ntfy.
+#
+# Covers what the netdata Graphite stream does not: ZFS pool degradation (the
+# loose SATA power cable) and Ironwolf disk temperature.
+#
+# Edge-triggering: a per-condition state file means each problem alerts ONCE
+# when it starts and ONCE when it clears (OUTAGE/RESOLVED), not every run.
+
+import json
+import subprocess
+import sys
+import os
+import urllib.request
+
+SSH_USER = "{{ nas_ssh_user }}"
+SSH_HOST = "{{ nas_ssh_host }}"
+SSH_KEY = "{{ nas_ssh_key }}"
+NTFY_URL = "https://ntfy.snorp.dev/{{ nas_ntfy_topic }}"
+TEMP_WARN = {{ nas_disk_temp_warn }}
+TEMP_CRIT = {{ nas_disk_temp_crit }}
+STATE_FILE = "{{ nas_watchdog_state }}"
+
+# Disks that are spinning Ironwolfs (HDD). nvme0n1 is the boot drive; we still
+# report it but apply HDD thresholds only to the data disks. Temp thresholds
+# are applied to all; tune here if the NVMe needs a different ceiling.
+SSH_BASE = [
+    "ssh", "-i", SSH_KEY,
+    "-o", "BatchMode=yes",
+    "-o", "ConnectTimeout=10",
+    "-o", "StrictHostKeyChecking=accept-new",
+    f"{SSH_USER}@{SSH_HOST}",
+]
+
+
+def midctl(method):
+    try:
+        out = subprocess.check_output(
+            SSH_BASE + [f"midclt call {method}"],
+            stderr=subprocess.DEVNULL, timeout=30,
+        )
+        return json.loads(out.decode())
+    except Exception as e:
+        return {"__error__": str(e)}
+
+
+def load_state():
+    try:
+        with open(STATE_FILE) as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def save_state(state):
+    os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
+    tmp = STATE_FILE + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(state, f)
+    os.replace(tmp, STATE_FILE)
+
+
+def notify(title, message, priority, tags):
+    req = urllib.request.Request(
+        NTFY_URL,
+        data=message.encode(),
+        headers={
+            "Title": title,
+            "Priority": priority,
+            "Tags": tags,
+        },
+        method="POST",
+    )
+    try:
+        urllib.request.urlopen(req, timeout=10)
+    except Exception as e:
+        # Best effort; log to stderr for journald.
+        print(f"ntfy push failed: {e}", file=sys.stderr)
+
+
+def edge(state, key, active, fire_title, fire_msg, clear_title, clear_msg):
+    """Fire on rising edge, RESOLVED on falling edge. Returns updated bool."""
+    was = state.get(key, False)
+    if active and not was:
+        notify(fire_title, fire_msg, "urgent", "rotating_light")
+    elif not active and was:
+        notify(clear_title, clear_msg, "default", "white_check_mark")
+    state[key] = active
+
+
+def walk_vdev(node, bad):
+    """Collect any vdev/disk whose status is not ONLINE."""
+    st = node.get("status")
+    name = node.get("name")
+    if st and st != "ONLINE" and name:
+        bad.append(f"{name}:{st}")
+    for child in node.get("children", []) or []:
+        walk_vdev(child, bad)
+
+
+def main():
+    state = load_state()
+
+    pools = midctl("pool.query")
+    temps = midctl("disk.temperatures")
+
+    # ---- Reachability: if midclt/SSH failed, alert once ----
+    unreachable = (
+        isinstance(pools, dict) and "__error__" in pools
+    ) or (
+        isinstance(temps, dict) and "__error__" in temps
+    )
+    edge(
+        state, "nas_unreachable", unreachable,
+        "OUTAGE: NAS watchdog cannot reach TrueNAS",
+        f"Hawkeye could not query the NAS via midclt over SSH. "
+        f"Error: {pools.get('__error__') if isinstance(pools, dict) else ''} "
+        f"{temps.get('__error__') if isinstance(temps, dict) else ''}".strip(),
+        "RESOLVED: NAS watchdog reached TrueNAS again",
+        "The NAS is responding to midclt queries again.",
+    )
+    if unreachable:
+        save_state(state)
+        return
+
+    # ---- ZFS pool health (THE SATA CABLE WATCH) ----
+    for pool in pools:
+        pname = pool.get("name", "?")
+        healthy = pool.get("healthy", True)
+        bad = []
+        topo = pool.get("topology") or {}
+        for grp in ("data", "cache", "log", "spare", "special"):
+            for vd in topo.get(grp, []) or []:
+                walk_vdev(vd, bad)
+        # Fallback: some versions nest the tree under the pool root directly.
+        if not topo and pool.get("status") and pool["status"] != "ONLINE":
+            bad.append(f"{pname}:{pool['status']}")
+
+        degraded = (not healthy) or bool(bad)
+        detail = (", ".join(bad)) if bad else (pool.get("status") or "DEGRADED")
+        edge(
+            state, f"pool_{pname}_degraded", degraded,
+            f"OUTAGE: ZFS pool '{pname}' is DEGRADED",
+            f"Pool '{pname}' is not healthy: {detail}. A mirror member may have "
+            f"dropped - CHECK THE SATA POWER CABLE on the Zimaboard.",
+            f"RESOLVED: ZFS pool '{pname}' healthy again",
+            f"Pool '{pname}' is back to ONLINE/healthy.",
+        )
+
+    # ---- Disk temperatures (Ironwolf 55/60C) ----
+    if isinstance(temps, dict):
+        for disk, t in temps.items():
+            if t is None:
+                continue
+            crit = t >= TEMP_CRIT
+            warn = (t >= TEMP_WARN) and not crit
+            edge(
+                state, f"disk_{disk}_crit", crit,
+                f"OUTAGE: NAS disk {disk} HOT at {t}C",
+                f"Disk {disk} at {t}C, at/over the {TEMP_CRIT}C 'not recommended' "
+                f"Ironwolf threshold. Check NAS cooling.",
+                f"RESOLVED: NAS disk {disk} cooled down",
+                f"Disk {disk} back under {TEMP_CRIT}C (now {t}C).",
+            )
+            # Warn edge is separate so a disk crossing into crit doesn't also
+            # leave a stale warn active.
+            edge(
+                state, f"disk_{disk}_warn", warn,
+                f"NAS disk {disk} warm at {t}C",
+                f"Disk {disk} at {t}C, over the {TEMP_WARN}C warn threshold.",
+                f"RESOLVED: NAS disk {disk} back to normal temp",
+                f"Disk {disk} back under {TEMP_WARN}C (now {t}C).",
+            )
+
+    save_state(state)
+
+
+if __name__ == "__main__":
+    main()
