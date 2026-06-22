@@ -5,7 +5,10 @@
 # stream does NOT carry: ZFS pool degradation (the loose SATA power cable) and
 # Ironwolf disk temperature.
 
-nas_ssh_user: "snorp"
+# Dedicated TrueNAS user for the Hawkeye watchdog. TrueNAS allows only one SSH
+# key per user, so a separate 'hawkeye' user holds Hawkeye's key (rather than
+# sharing the human 'snorp' user's single key slot).
+nas_ssh_user: "hawkeye"
 nas_ssh_host: "{{ nas_ip }}"          # 192.168.8.204 from group_vars
 nas_ssh_key: /root/.ssh/id_ed25519     # reuse Hawkeye's existing key (same as router discovery)
 

@@ -45,39 +45,37 @@
   ansible.builtin.fail:
     msg: |
       Hawkeye cannot SSH to the NAS as {{ nas_ssh_user }} yet (publickey).
-      ONE-TIME BOOTSTRAP: add this Hawkeye public key to the TrueNAS
-      {{ nas_ssh_user }} user's SSH keys (Credentials > Local Users > edit >
-      Authorized Keys), then re-run:
+      ONE-TIME BOOTSTRAP: create/edit the dedicated TrueNAS '{{ nas_ssh_user }}'
+      user (Credentials > Local Users), give it shell access + midclt rights,
+      and paste this Hawkeye public key into its Authorized Keys, then re-run:
 
         {{ hawkeye_pub.content | b64decode | trim }}
   when: nas_ssh_probe.rc != 0
 
-# --- Authorize/keep that key on the TrueNAS 'snorp' user via midclt ---
-# TrueNAS owns authorized_keys; we set keys through user.update, not by editing
-# the file. Fetch the user's current sshpubkey, append ours if absent, write the
-# merged set back. (After the one-time bootstrap above, this keeps it managed.)
-- name: Fetch current snorp sshpubkey from TrueNAS
+# Verify the watchdog user can actually run the midclt calls it needs. A fresh
+# non-root TrueNAS user may be denied privileged middleware methods; catch that
+# here with a clear message rather than silent watchdog failures later.
+- name: Verify the NAS user can run required midclt calls
   ansible.builtin.command: >
-    ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new
+    ssh -i {{ nas_ssh_key }} -o BatchMode=yes -o ConnectTimeout=10
     {{ nas_ssh_user }}@{{ nas_ssh_host }}
-    midclt call user.query '[["username","=","{{ nas_ssh_user }}"]]'
-  register: nas_user_q
+    midclt call disk.temperatures
+  register: nas_midclt_probe
   changed_when: false
+  failed_when: false
 
-- name: Compute merged authorized key set
-  ansible.builtin.set_fact:
-    nas_existing_pubkey: "{{ (nas_user_q.stdout | from_json)[0].sshpubkey | default('') }}"
-    hawkeye_pubkey_line: "{{ hawkeye_pub.content | b64decode | trim }}"
+- name: Stop if the NAS user cannot run midclt
+  ansible.builtin.fail:
+    msg: |
+      The TrueNAS '{{ nas_ssh_user }}' user connected over SSH but could not run
+      'midclt call disk.temperatures'. Grant it the needed privileges (e.g. add
+      to a group with middleware access) and re-run. Output:
+      {{ nas_midclt_probe.stdout }} {{ nas_midclt_probe.stderr }}
+  when: nas_midclt_probe.rc != 0
 
-- name: Authorize Hawkeye key on TrueNAS snorp user (idempotent, preserves existing)
-  ansible.builtin.command: >
-    ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new
-    {{ nas_ssh_user }}@{{ nas_ssh_host }}
-    midclt call user.update {{ (nas_user_q.stdout | from_json)[0].id }}
-    '{{ {"sshpubkey": (nas_existing_pubkey ~ "\n" ~ hawkeye_pubkey_line) | trim} | to_json }}'
-  when: hawkeye_pubkey_line not in nas_existing_pubkey
-  register: nas_key_auth
-  changed_when: nas_key_auth.rc == 0
+# NOTE: SSH key management is intentionally NOT done here. TrueNAS allows one
+# key per user, so the key lives on a dedicated '{{ nas_ssh_user }}' user,
+# managed in the TrueNAS UI. The role only consumes that access.
 
 # --- Deploy the watchdog ---
 - name: Create watchdog state dir
