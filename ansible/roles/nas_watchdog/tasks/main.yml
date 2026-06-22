@@ -15,11 +15,47 @@
     src: /root/.ssh/id_ed25519.pub
   register: hawkeye_pub
 
-# --- Authorize that key on the TrueNAS 'snorp' user via midclt (appliance-safe) ---
-# TrueNAS owns authorized_keys; we must set keys through user.update, not by
-# editing the file. We fetch the user's current sshpubkey, append ours if absent,
-# and write the merged set back. The bootstrap SSH session uses the key the
-# operator (Benj) already authorized for snorp - delegated via local ssh.
+# Seed the NAS host key into known_hosts BEFORE any SSH to the NAS, so the
+# fetch/update tasks below are non-interactive on a fresh Hawkeye.
+- name: Pre-seed NAS host key into Hawkeye known_hosts
+  ansible.builtin.shell: >
+    touch /root/.ssh/known_hosts;
+    ssh-keyscan -H {{ nas_ssh_host }} >> /root/.ssh/known_hosts 2>/dev/null;
+    sort -u /root/.ssh/known_hosts -o /root/.ssh/known_hosts
+  changed_when: false
+
+# --- BOOTSTRAP NOTE -------------------------------------------------------
+# The tasks below SSH to the NAS as {{ nas_ssh_user }} using Hawkeye's key.
+# On the VERY FIRST run that key must already be authorized on the TrueNAS
+# {{ nas_ssh_user }} user, otherwise these fail with publickey denied. Do the
+# one-time bootstrap (add Hawkeye's pubkey to the snorp user's SSH keys in the
+# TrueNAS UI, or via an existing working SSH session). After that, this role
+# keeps the key set managed idempotently. Hawkeye's pubkey is shown at the end
+# of a failed run via the assertion below.
+- name: Verify Hawkeye can SSH to the NAS (bootstrap gate)
+  ansible.builtin.command: >
+    ssh -i {{ nas_ssh_key }} -o BatchMode=yes -o ConnectTimeout=10
+    -o StrictHostKeyChecking=accept-new
+    {{ nas_ssh_user }}@{{ nas_ssh_host }} true
+  register: nas_ssh_probe
+  changed_when: false
+  failed_when: false
+
+- name: Stop with bootstrap instructions if Hawkeye key not yet authorized
+  ansible.builtin.fail:
+    msg: |
+      Hawkeye cannot SSH to the NAS as {{ nas_ssh_user }} yet (publickey).
+      ONE-TIME BOOTSTRAP: add this Hawkeye public key to the TrueNAS
+      {{ nas_ssh_user }} user's SSH keys (Credentials > Local Users > edit >
+      Authorized Keys), then re-run:
+
+        {{ hawkeye_pub.content | b64decode | trim }}
+  when: nas_ssh_probe.rc != 0
+
+# --- Authorize/keep that key on the TrueNAS 'snorp' user via midclt ---
+# TrueNAS owns authorized_keys; we set keys through user.update, not by editing
+# the file. Fetch the user's current sshpubkey, append ours if absent, write the
+# merged set back. (After the one-time bootstrap above, this keeps it managed.)
 - name: Fetch current snorp sshpubkey from TrueNAS
   ansible.builtin.command: >
     ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new
@@ -42,12 +78,6 @@
   when: hawkeye_pubkey_line not in nas_existing_pubkey
   register: nas_key_auth
   changed_when: nas_key_auth.rc == 0
-
-- name: Pre-seed NAS host key into Hawkeye known_hosts (non-interactive ssh)
-  ansible.builtin.shell: >
-    ssh-keyscan -H {{ nas_ssh_host }} >> /root/.ssh/known_hosts 2>/dev/null;
-    sort -u /root/.ssh/known_hosts -o /root/.ssh/known_hosts
-  changed_when: false
 
 # --- Deploy the watchdog ---
 - name: Create watchdog state dir
