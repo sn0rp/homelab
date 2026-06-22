@@ -21,12 +21,24 @@ route:
 receivers:
   - name: ntfy-outage
     webhook_configs:
-      # ntfy accepts Alertmanager webhooks directly at /<topic>.
-      # send_resolved=true gives us the queue-and-flush recovery message:
-      # when connectivity returns, ntfy delivers the "[RESOLVED]" summary with
-      # the start + end timestamps of the outage.
-      # ntfy is behind nginx TLS; use the hostname so the wildcard cert matches.
-      - url: "https://ntfy.snorp.dev/{{ ntfy_outage_topic }}?tpl=yes&title=Spectrum+Status"
+      # ntfy accepts Alertmanager webhooks directly at /<topic> and, with
+      # tpl=yes, renders the notification title/message from the Alertmanager
+      # JSON payload using Go templates. This is what turns the useless
+      # "Spectrum Status was triggered" into the actual outage classification.
+      #
+      # Payload shape (Alertmanager webhook v4):
+      #   .status                          -> "firing" | "resolved"
+      #   .alerts[0].annotations.summary   -> short outage class headline
+      #   .alerts[0].annotations.description -> full "this is/ isn't your gear" text
+      #
+      # Escaping note: Jinja2 renders this file first, so the Go template braces
+      # are wrapped in {% raw %}...{% endraw %} to survive into the deployed
+      # config. Query-string special chars are percent-encoded (spaces -> %20).
+      #
+      # send_resolved=true gives the queue-and-flush recovery message: when
+      # connectivity returns, ntfy delivers the resolved notice. ntfy is behind
+      # nginx TLS; use the hostname so the wildcard cert matches.
+      - url: "https://ntfy.snorp.dev/{{ ntfy_outage_topic }}?tpl=yes{% raw %}&title={{if eq .status \"firing\"}}{{(index .alerts 0).annotations.summary}}{{else}}RESOLVED:%20{{(index .alerts 0).annotations.summary}}{{end}}&message={{(index .alerts 0).annotations.description}}&priority={{if eq .status \"firing\"}}urgent{{else}}default{{end}}&tags={{if eq .status \"firing\"}}rotating_light{{else}}white_check_mark{{end}}{% endraw %}"
         send_resolved: true
         max_alerts: 0
         http_config:
