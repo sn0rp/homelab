@@ -64,19 +64,21 @@
       # Keep messages around long enough to survive an outage + recovery window.
       cache-file: "/var/cache/ntfy/cache.db"
       cache-duration: "24h"
-      attachment-cache-dir: ""
       behind-proxy: true
   notify: Restart ntfy
 
 # Apply the config now (handlers are deferred to end-of-play, but the health
 # check below must see ntfy on its NEW loopback port).
-- name: Ensure ntfy enabled (before restart)
+# Restart unconditionally (NOT via notify): on a second apply the config copy
+# reports "ok/unchanged" so a notify handler would never fire, leaving a stale
+# process on the old listen address. A direct restart always applies the
+# on-disk config before the health check below.
+- name: Restart ntfy to apply current config
   ansible.builtin.systemd:
     name: ntfy
+    state: restarted
     enabled: yes
-
-- name: Flush handlers so ntfy restarts on the new listen address
-  ansible.builtin.meta: flush_handlers
+    daemon_reload: yes
 
 - name: Ensure ntfy enabled and started
   ansible.builtin.systemd:
