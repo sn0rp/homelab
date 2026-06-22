@@ -342,4 +342,28 @@
       domain = hawkeye.snorp.dev
       root_url = https://hawkeye.snorp.dev/
       enforce_domain = false
+  register: grafana_ini
   notify: Restart grafana
+
+- name: Restart Grafana now if config changed (apply before TLS check)
+  ansible.builtin.systemd:
+    name: grafana-server
+    state: restarted
+  when: grafana_ini is changed
+
+# Reload nginx unconditionally so Grafana's :443 TLS front is up immediately,
+# not deferred to end-of-play (and not skipped on an unchanged re-apply).
+- name: Reload nginx now so Grafana HTTPS is served
+  ansible.builtin.systemd:
+    name: nginx
+    state: reloaded
+
+- name: Wait for Grafana HTTPS to be reachable
+  ansible.builtin.uri:
+    url: "https://{{ ansible_host }}/api/health"
+    validate_certs: false
+    status_code: 200
+  register: grafana_https
+  until: grafana_https.status == 200
+  retries: 6
+  delay: 5

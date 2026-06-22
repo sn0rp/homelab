@@ -156,6 +156,14 @@
     state: absent
   notify: Reload nginx
 
+# Reload now (not via deferred notify): the HTTPS health check below must see
+# nginx already serving :443. A notify handler fires at end-of-play, too late,
+# and won't fire at all on a re-apply where the site file is unchanged.
+- name: Reload nginx now so 443 is up before the health check
+  ansible.builtin.systemd:
+    name: nginx
+    state: reloaded
+
 - name: Wait for ntfy HTTPS to be reachable
   ansible.builtin.uri:
     url: "https://{{ ansible_host }}/v1/health"
