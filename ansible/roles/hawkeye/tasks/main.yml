@@ -22,7 +22,6 @@
       - traceroute
       - apt-transport-https
       - gnupg
-      - software-properties-common
     state: present
     update_cache: yes
 
