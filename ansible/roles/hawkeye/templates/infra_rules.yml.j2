@@ -112,35 +112,31 @@ groups:
 
   - name: infra_nas
     rules:
-      # ---- Ironwolf HDD temperature (datasheet: >60C not recommended) ----
-      - alert: NasDiskWarm
-        expr: truenas_disk_temperature_celsius > 55
+      # NOTE: TrueNAS CE's netdata Graphite stream does NOT carry disk
+      # temperatures, SMART, or ZFS pool health. Those safety-critical signals -
+      # the Ironwolf 60C alert and the loose-SATA-cable pool-degraded watchdog -
+      # are handled on the TrueNAS box via a midclt watchdog that pushes
+      # directly to ntfy (see nas_watchdog role). Only metrics that genuinely
+      # exist in the Graphite stream are alerted on here.
+
+      # ---- CPU temperature (cputemp IS in the stream) ----
+      - alert: NasCpuHot
+        expr: truenas_cpu_temperature_celsius{cpu="cpu"} > 90
         for: 10m
         labels:
           severity: warning
           outage_class: infra
         annotations:
-          summary: "NAS disk warm: {{ '{{' }} $labels.disk {{ '}}' }} at {{ '{{' }} $value {{ '}}' }}C"
-          description: "Ironwolf drive over 55C for 10m. Datasheet warns against sustained operation above 60C."
+          summary: "NAS CPU hot at {{ '{{' }} $value {{ '}}' }}C"
+          description: "TrueNAS CPU package temperature over 90C for 10m. Check NAS cooling/airflow."
 
-      - alert: NasDiskHot
-        expr: truenas_disk_temperature_celsius > 60
+      # ---- graphite_exporter down (NAS metrics stop flowing) ----
+      - alert: NasGraphiteStale
+        expr: up{job="truenas_graphite"} == 0
         for: 5m
-        labels:
-          severity: critical
-          outage_class: infra
-        annotations:
-          summary: "NAS disk HOT: {{ '{{' }} $labels.disk {{ '}}' }} at {{ '{{' }} $value {{ '}}' }}C"
-          description: "Ironwolf drive over 60C - Seagate's 'not recommended' sustained threshold. Drive health may be affected. Check NAS cooling."
-
-      # ---- ZFS pool capacity (placeholder metric; confirm exact name from
-      #      the live Graphite stream, then tighten this expr) ----
-      - alert: NasPoolNearFull
-        expr: truenas_df_bytes{state="used"} / (truenas_df_bytes{state="used"} + truenas_df_bytes{state="free"}) * 100 > 80
-        for: 30m
         labels:
           severity: warning
           outage_class: infra
         annotations:
-          summary: "NAS pool {{ '{{' }} $labels.filesystem {{ '}}' }} >80% full"
-          description: "ZFS performance degrades badly past ~80-90% capacity. Consider cleanup or expansion."
+          summary: "TrueNAS graphite_exporter scrape is down"
+          description: "Prometheus cannot scrape graphite_exporter; NAS metrics are stale (does not affect the midclt watchdog alerts)."
