@@ -22,10 +22,15 @@ receivers:
   - name: ntfy-outage
     webhook_configs:
       # ntfy template mode (tpl=yes): ntfy parses the Alertmanager webhook JSON
-      # body and renders the notification title/message from Go templates in the
-      # title= / message= query params. This produces the useful notification:
-      #   title   <- the alert summary  (e.g. "Spectrum outage - last mile ...")
-      #   message <- the alert description (the "this is/isn't your gear" text)
+      # body and renders the notification from Go templates in the query params.
+      #   title    <- "OUTAGE: " or "RESOLVED: " + the alert summary, branched on
+      #               .status (firing|resolved) so a recovery is not mistaken
+      #               for a fresh outage
+      #   message  <- the alert description (the "this is/isn't your gear" text)
+      #   priority <- urgent when firing, default when resolved
+      # NOTE: ntfy templates title/message/priority but NOT tags (verified), so
+      # emoji-via-tags does not work here; the OUTAGE/RESOLVED prefix + priority
+      # difference is what distinguishes firing from recovery.
       #
       # CRITICAL LESSON (do not reintroduce raw braces): Alertmanager templates
       # this URL ITSELF, against its own template.Data context, BEFORE sending.
@@ -45,7 +50,7 @@ receivers:
       # Template targets the first alert's annotations: %7B%7B(index .alerts 0)
       # .annotations.summary%7D%7D etc. send_resolved=true still delivers the
       # recovery notice. ntfy is behind nginx TLS; hostname matches wildcard cert.
-      - url: "https://ntfy.snorp.dev/{{ ntfy_outage_topic }}?tpl=yes&title=%7B%7B(index%20.alerts%200).annotations.summary%7D%7D&message=%7B%7B(index%20.alerts%200).annotations.description%7D%7D"
+      - url: "https://ntfy.snorp.dev/{{ ntfy_outage_topic }}?tpl=yes&title=%7B%7Bif%20eq%20.status%20%22firing%22%7D%7DOUTAGE%3A%20%7B%7Belse%7D%7DRESOLVED%3A%20%7B%7Bend%7D%7D%7B%7B%28index%20.alerts%200%29.annotations.summary%7D%7D&message=%7B%7B%28index%20.alerts%200%29.annotations.description%7D%7D&priority=%7B%7Bif%20eq%20.status%20%22firing%22%7D%7Durgent%7B%7Belse%7D%7Ddefault%7B%7Bend%7D%7D"
         send_resolved: true
         max_alerts: 0
         http_config:
