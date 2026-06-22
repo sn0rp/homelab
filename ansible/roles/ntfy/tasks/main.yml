@@ -42,13 +42,14 @@
     name: ntfy
     state: present
 
-- name: Configure ntfy server (LAN-only, no auth, listen on :80)
+- name: Configure ntfy server (LAN-only, no auth, behind nginx TLS)
   ansible.builtin.copy:
     dest: /etc/ntfy/server.yml
     content: |
       # Managed by Ansible (homelab role: ntfy)
-      base-url: "http://ntfy.snorp.dev"
-      listen-http: ":80"
+      base-url: "https://ntfy.snorp.dev"
+      # ntfy listens HTTP on loopback; nginx terminates TLS in front of it.
+      listen-http: "127.0.0.1:2586"
       # Pure-LAN: no cloud, no upstream relay, no auth.
       # Anyone on the LAN can publish/subscribe. This is a private homelab net.
       auth-default-access: "read-write"
@@ -56,7 +57,7 @@
       cache-file: "/var/cache/ntfy/cache.db"
       cache-duration: "24h"
       attachment-cache-dir: ""
-      behind-proxy: false
+      behind-proxy: true
   notify: Restart ntfy
 
 - name: Ensure ntfy cache dir exists
@@ -73,11 +74,82 @@
     enabled: yes
     state: started
 
-- name: Wait for ntfy to be reachable
+- name: Wait for ntfy to be reachable (loopback)
   ansible.builtin.uri:
-    url: "http://{{ ansible_host }}/v1/health"
+    url: "http://127.0.0.1:2586/v1/health"
     status_code: 200
   register: ntfy_health
   until: ntfy_health.status == 200
   retries: 12
+  delay: 5
+
+# --- TLS front (nginx + wildcard cert, matching the fleet convention) ---
+- name: Install nginx
+  ansible.builtin.apt:
+    name: nginx
+    state: present
+
+- name: Create nginx cert directory
+  ansible.builtin.file:
+    path: /etc/nginx/certs
+    state: directory
+
+- name: Copy wildcard cert to ntfy LXC (pushed from Proxmox host)
+  ansible.builtin.command: "{{ item }}"
+  loop:
+    - pct push 104 /etc/pve/local/certs/fullchain.pem /etc/nginx/certs/fullchain.pem
+    - pct push 104 /etc/pve/local/certs/privkey.pem /etc/nginx/certs/privkey.pem
+  delegate_to: proxmox
+
+- name: Configure nginx reverse proxy for ntfy (HTTPS)
+  ansible.builtin.copy:
+    dest: /etc/nginx/sites-available/ntfy
+    content: |
+      server {
+          listen 80 default_server;
+          server_name ntfy.snorp.dev;
+          return 301 https://$host$request_uri;
+      }
+      server {
+          listen 443 ssl default_server;
+          server_name ntfy.snorp.dev;
+          ssl_certificate /etc/nginx/certs/fullchain.pem;
+          ssl_certificate_key /etc/nginx/certs/privkey.pem;
+          # ntfy needs long-lived connections for the persistent phone stream.
+          location / {
+              proxy_pass http://127.0.0.1:2586;
+              proxy_http_version 1.1;
+              proxy_set_header Host $host;
+              proxy_set_header X-Real-IP $remote_addr;
+              proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+              proxy_set_header X-Forwarded-Proto $scheme;
+              proxy_set_header Connection "";
+              proxy_read_timeout 600s;
+              proxy_send_timeout 600s;
+              proxy_buffering off;
+          }
+      }
+  notify: Reload nginx
+
+- name: Enable ntfy nginx site
+  ansible.builtin.file:
+    src: /etc/nginx/sites-available/ntfy
+    dest: /etc/nginx/sites-enabled/ntfy
+    state: link
+  notify: Reload nginx
+
+- name: Remove nginx default site
+  ansible.builtin.file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+  notify: Reload nginx
+
+- name: Wait for ntfy HTTPS to be reachable
+  ansible.builtin.uri:
+    url: "https://{{ ansible_host }}/v1/health"
+    validate_certs: false
+    status_code: 200
+  register: ntfy_https
+  until: ntfy_https.status == 200
+  retries: 6
   delay: 5

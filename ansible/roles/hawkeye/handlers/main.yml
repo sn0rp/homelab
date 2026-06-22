@@ -36,3 +36,8 @@
     state: restarted
     enabled: yes
     daemon_reload: yes
+
+- name: Reload nginx
+  systemd:
+    name: nginx
+    state: reloaded

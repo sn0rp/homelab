@@ -25,6 +25,10 @@ receivers:
       # send_resolved=true gives us the queue-and-flush recovery message:
       # when connectivity returns, ntfy delivers the "[RESOLVED]" summary with
       # the start + end timestamps of the outage.
-      - url: "http://{{ ntfy_ip }}/{{ ntfy_outage_topic }}?tpl=yes&title=Spectrum+Status"
+      # ntfy is behind nginx TLS; use the hostname so the wildcard cert matches.
+      - url: "https://ntfy.snorp.dev/{{ ntfy_outage_topic }}?tpl=yes&title=Spectrum+Status"
         send_resolved: true
         max_alerts: 0
+        http_config:
+          tls_config:
+            insecure_skip_verify: false
