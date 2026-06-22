@@ -42,6 +42,14 @@
     name: ntfy
     state: present
 
+- name: Ensure ntfy cache dir exists (before service start)
+  ansible.builtin.file:
+    path: /var/cache/ntfy
+    state: directory
+    owner: ntfy
+    group: ntfy
+    mode: "0755"
+
 - name: Configure ntfy server (LAN-only, no auth, behind nginx TLS)
   ansible.builtin.copy:
     dest: /etc/ntfy/server.yml
@@ -60,13 +68,15 @@
       behind-proxy: true
   notify: Restart ntfy
 
-- name: Ensure ntfy cache dir exists
-  ansible.builtin.file:
-    path: /var/cache/ntfy
-    state: directory
-    owner: ntfy
-    group: ntfy
-    mode: "0755"
+# Apply the config now (handlers are deferred to end-of-play, but the health
+# check below must see ntfy on its NEW loopback port).
+- name: Ensure ntfy enabled (before restart)
+  ansible.builtin.systemd:
+    name: ntfy
+    enabled: yes
+
+- name: Flush handlers so ntfy restarts on the new listen address
+  ansible.builtin.meta: flush_handlers
 
 - name: Ensure ntfy enabled and started
   ansible.builtin.systemd:
