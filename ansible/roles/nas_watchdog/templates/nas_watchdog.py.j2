@@ -186,14 +186,16 @@ def main():
 
         degraded = (not healthy) or bool(bad)
         detail = (", ".join(bad)) if bad else (pool.get("status") or "DEGRADED")
-        {% raw %}metrics.append(f'nas_pool_healthy{{pool="{pname}"}} {0 if degraded else 1}'){% endraw %}
+        {% raw %}metrics.append(f'nas_pool_healthy{{pool="{pname}"}} {0 if degraded else 1}')
+{% endraw %}
         # Emit per-member online state (1=ONLINE) for the mirror view.
         members = []
         for grp in ("data", "cache", "log", "spare", "special"):
             for vd in topo.get(grp, []) or []:
                 _collect_members(vd, pname, members)
         for mname, online in members:
-            {% raw %}metrics.append(f'nas_vdev_online{{pool="{pname}",member="{mname}"}} {online}'){% endraw %}
+            {% raw %}metrics.append(f'nas_vdev_online{{pool="{pname}",member="{mname}"}} {online}')
+{% endraw %}
         edge(
             state, f"pool_{pname}_degraded", degraded,
             f"OUTAGE: ZFS pool '{pname}' is DEGRADED",
@@ -208,7 +210,8 @@ def main():
         for disk, t in temps.items():
             if t is None:
                 continue
-            {% raw %}metrics.append(f'nas_disk_temperature_celsius{{disk="{disk}"}} {t}'){% endraw %}
+            {% raw %}metrics.append(f'nas_disk_temperature_celsius{{disk="{disk}"}} {t}')
+{% endraw %}
             crit = t >= TEMP_CRIT
             warn = (t >= TEMP_WARN) and not crit
             edge(
