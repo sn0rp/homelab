@@ -77,6 +77,61 @@
 # key per user, so the key lives on a dedicated '{{ nas_ssh_user }}' user,
 # managed in the TrueNAS UI. The role only consumes that access.
 
+# --- node_exporter on Hawkeye (textfile-only) to serve NAS temps + health ---
+# The netdata Graphite stream carries no disk temps / pool health, so the
+# watchdog writes them as Prometheus textfile metrics and a local node_exporter
+# exposes them for scraping. This makes NAS temps + ZFS health graphable.
+- name: Create node_exporter system user (Hawkeye)
+  ansible.builtin.user:
+    name: node_exporter
+    system: yes
+    shell: /usr/sbin/nologin
+    create_home: no
+
+- name: Create textfile collector directory (Hawkeye)
+  ansible.builtin.file:
+    path: "{{ nas_textfile_dir }}"
+    state: directory
+    owner: node_exporter
+    group: node_exporter
+    mode: "0775"
+
+- name: Download + unpack node_exporter (Hawkeye)
+  ansible.builtin.unarchive:
+    src: "https://github.com/prometheus/node_exporter/releases/download/v{{ hawkeye_node_exporter_version }}/node_exporter-{{ hawkeye_node_exporter_version }}.linux-amd64.tar.gz"
+    dest: /usr/local/bin
+    remote_src: yes
+    extra_opts: ["--strip-components=1", "--wildcards", "*/node_exporter"]
+    creates: /usr/local/bin/node_exporter
+
+- name: Deploy node_exporter systemd unit (Hawkeye, textfile-focused)
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/node_exporter.service
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Prometheus node_exporter (Hawkeye)
+      Wants=network-online.target
+      After=network-online.target
+      [Service]
+      User=node_exporter
+      Group=node_exporter
+      Type=simple
+      ExecStart=/usr/local/bin/node_exporter \
+        --web.listen-address=:{{ hawkeye_node_exporter_port }} \
+        --collector.textfile.directory={{ nas_textfile_dir }}
+      Restart=on-failure
+      [Install]
+      WantedBy=multi-user.target
+  notify: Reload systemd
+
+- name: Enable + start node_exporter (Hawkeye)
+  ansible.builtin.systemd:
+    name: node_exporter
+    enabled: yes
+    state: started
+    daemon_reload: yes
+
 # --- Deploy the watchdog ---
 - name: Create watchdog state dir
   ansible.builtin.file:

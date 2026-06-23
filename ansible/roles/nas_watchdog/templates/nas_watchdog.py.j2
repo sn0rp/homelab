@@ -22,6 +22,9 @@ NTFY_URL = "https://ntfy.snorp.dev/{{ nas_ntfy_topic }}"
 TEMP_WARN = {{ nas_disk_temp_warn }}
 TEMP_CRIT = {{ nas_disk_temp_crit }}
 STATE_FILE = "{{ nas_watchdog_state }}"
+# Prometheus textfile output (served by node_exporter on Hawkeye) so Grafana
+# can graph NAS disk temps + pool health, which the Graphite stream lacks.
+TEXTFILE_PATH = "{{ nas_textfile_path }}"
 
 # Disks that are spinning Ironwolfs (HDD). nvme0n1 is the boot drive; we still
 # report it but apply HDD thresholds only to the data disks. Temp thresholds
@@ -90,6 +93,18 @@ def edge(state, key, active, fire_title, fire_msg, clear_title, clear_msg):
     state[key] = active
 
 
+def write_textfile(lines):
+    """Atomically write Prometheus textfile metrics for node_exporter."""
+    try:
+        os.makedirs(os.path.dirname(TEXTFILE_PATH), exist_ok=True)
+        tmp = TEXTFILE_PATH + ".tmp"
+        with open(tmp, "w") as f:
+            f.write("\n".join(lines) + "\n")
+        os.replace(tmp, TEXTFILE_PATH)
+    except Exception as e:
+        print(f"textfile write failed: {e}", file=sys.stderr)
+
+
 def walk_vdev(node, bad):
     """Collect any vdev/disk whose status is not ONLINE."""
     st = node.get("status")
@@ -100,8 +115,30 @@ def walk_vdev(node, bad):
         walk_vdev(child, bad)
 
 
+def _collect_members(node, pname, out):
+    """Collect leaf members (actual disks/partitions) with online state 1/0."""
+    children = node.get("children", []) or []
+    name = node.get("name")
+    if not children and name:
+        out.append((name, 1 if node.get("status") == "ONLINE" else 0))
+    for child in children:
+        _collect_members(child, pname, out)
+
+
 def main():
     state = load_state()
+    metrics = [
+        "# HELP nas_disk_temperature_celsius TrueNAS disk temperature (via watchdog).",
+        "# TYPE nas_disk_temperature_celsius gauge",
+        "# HELP nas_pool_healthy ZFS pool healthy (1) or degraded (0).",
+        "# TYPE nas_pool_healthy gauge",
+        "# HELP nas_vdev_online vdev/disk member online (1) or not (0).",
+        "# TYPE nas_vdev_online gauge",
+        "# HELP nas_watchdog_up Watchdog could reach the NAS this run (1/0).",
+        "# TYPE nas_watchdog_up gauge",
+        "# HELP nas_watchdog_last_run_timestamp Unix time of last successful poll.",
+        "# TYPE nas_watchdog_last_run_timestamp gauge",
+    ]
 
     pools = midctl("pool.query")
     temps = midctl("disk.temperatures")
@@ -122,8 +159,17 @@ def main():
         "The NAS is responding to midclt queries again.",
     )
     if unreachable:
+        # Keep last-good textfile values; just flag the watchdog as down.
+        write_textfile([
+            "# HELP nas_watchdog_up Watchdog could reach the NAS this run (1/0).",
+            "# TYPE nas_watchdog_up gauge",
+            "nas_watchdog_up 0",
+        ])
         save_state(state)
         return
+
+    metrics.append("nas_watchdog_up 1")
+    metrics.append(f"nas_watchdog_last_run_timestamp {int(__import__('time').time())}")
 
     # ---- ZFS pool health (THE SATA CABLE WATCH) ----
     for pool in pools:
@@ -140,6 +186,14 @@ def main():
 
         degraded = (not healthy) or bool(bad)
         detail = (", ".join(bad)) if bad else (pool.get("status") or "DEGRADED")
+        {% raw %}metrics.append(f'nas_pool_healthy{{pool="{pname}"}} {0 if degraded else 1}'){% endraw %}
+        # Emit per-member online state (1=ONLINE) for the mirror view.
+        members = []
+        for grp in ("data", "cache", "log", "spare", "special"):
+            for vd in topo.get(grp, []) or []:
+                _collect_members(vd, pname, members)
+        for mname, online in members:
+            {% raw %}metrics.append(f'nas_vdev_online{{pool="{pname}",member="{mname}"}} {online}'){% endraw %}
         edge(
             state, f"pool_{pname}_degraded", degraded,
             f"OUTAGE: ZFS pool '{pname}' is DEGRADED",
@@ -154,6 +208,7 @@ def main():
         for disk, t in temps.items():
             if t is None:
                 continue
+            {% raw %}metrics.append(f'nas_disk_temperature_celsius{{disk="{disk}"}} {t}'){% endraw %}
             crit = t >= TEMP_CRIT
             warn = (t >= TEMP_WARN) and not crit
             edge(
@@ -174,6 +229,7 @@ def main():
                 f"Disk {disk} back under {TEMP_WARN}C (now {t}C).",
             )
 
+    write_textfile(metrics)
     save_state(state)
 
 

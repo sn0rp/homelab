@@ -36,6 +36,14 @@ scrape_configs:
       - target_label: __address__
         replacement: 127.0.0.1:9115
 
+  # Hawkeye's own node_exporter (textfile collector) - serves the NAS disk
+  # temps + ZFS pool health that the watchdog writes (Graphite lacks them).
+  - job_name: node_hawkeye
+    static_configs:
+      - targets: ["127.0.0.1:9100"]
+        labels:
+          host: "hawkeye"
+
   # Proxmox host node_exporter (CPU/RAM/temps/disk/SMART textfile).
   - job_name: node_proxmox
     static_configs:

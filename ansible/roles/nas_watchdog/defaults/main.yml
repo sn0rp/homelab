@@ -25,3 +25,12 @@ nas_watchdog_interval: "*:0/5"         # every 5 minutes
 
 # State file for edge-triggering (only notify on transitions).
 nas_watchdog_state: /var/lib/nas_watchdog/state.json
+
+# Textfile collector dir on Hawkeye. The watchdog writes NAS disk temps + pool
+# health here as Prometheus metrics so Grafana can graph them (the netdata
+# Graphite stream does not carry these). Served by a textfile-only node_exporter
+# running on Hawkeye itself.
+hawkeye_node_exporter_version: "1.9.1"
+hawkeye_node_exporter_port: 9100
+nas_textfile_dir: /var/lib/node_exporter/textfile_collector
+nas_textfile_path: /var/lib/node_exporter/textfile_collector/nas.prom
