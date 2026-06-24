@@ -74,14 +74,34 @@
     state: present
 
 # ---------------------------------------------------------------------------
-# promtail needs to read the journal: add its service user to systemd-journal.
-# The package creates the `promtail` user; the apt unit runs as that user.
-# ---------------------------------------------------------------------------
-- name: Add promtail user to systemd-journal group (read the journal)
+# promtail user/group. The apt package creates the promtail user (uid varies),
+# but does NOT reliably create a same-named primary `promtail` group, so any
+# chown to group=promtail fails with 'failed to look up group promtail'. Same
+# class of bug as the loki user earlier: never assume the package made the
+# user/group, and never let the `user` module modify a live service account
+# (usermod refuses while the service is running).
+#
+# So: guarantee the group idempotently, then a create-only user task that also
+# adds promtail to its group + systemd-journal (to read the journal), tolerating
+# the 'currently used by process' refusal when the service is already running.
+- name: Ensure promtail group exists
+  ansible.builtin.group:
+    name: promtail
+    system: yes
+
+- name: Ensure promtail user exists + is in required groups
   ansible.builtin.user:
     name: promtail
+    group: promtail
     groups: systemd-journal
     append: yes
+    system: yes
+    shell: /usr/sbin/nologin
+    create_home: no
+  register: promtail_user
+  failed_when:
+    - promtail_user is failed
+    - "'is currently used by process' not in (promtail_user.msg | default(''))"
   notify: Restart promtail
 
 - name: Ensure promtail positions/state directory exists
