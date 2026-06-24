@@ -48,3 +48,10 @@
     state: restarted
     enabled: yes
     daemon_reload: yes
+
+- name: Restart loki
+  systemd:
+    name: loki
+    state: restarted
+    enabled: yes
+    daemon_reload: yes

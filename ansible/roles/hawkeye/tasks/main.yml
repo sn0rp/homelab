@@ -239,13 +239,37 @@
     update_cache: yes
   when: grafana_repo.changed
 
-- name: Install Grafana, Loki, Promtail
+# Loki + Grafana live here; promtail (the log shipper) is NOT installed by this
+# role. Promtail is applied to every host - including Hawkeye itself - by the
+# dedicated `promtail` role, so the whole fleet ships logs identically with a
+# consistent `host` label. See site.yml.
+- name: Install Grafana + Loki
   apt:
     name:
       - grafana
       - loki
-      - promtail
     state: present
+
+# Explicit Loki config: bind on all interfaces so LAN promtail agents (Proxmox,
+# LXCs, OpenClaw VM - see promtail role) can push, and pin retention. We manage
+# this rather than relying on the apt package default so ingestion is
+# deterministic and version-controlled.
+- name: Ensure Loki data directory exists
+  ansible.builtin.file:
+    path: /var/lib/loki
+    state: directory
+    owner: loki
+    group: loki
+    mode: "0755"
+
+- name: Deploy Loki config
+  ansible.builtin.template:
+    src: loki.yml.j2
+    dest: /etc/loki/config.yml
+    owner: loki
+    group: loki
+    mode: "0644"
+  notify: Restart loki
 
 - name: Configure Grafana Prometheus + Loki datasources (provisioning)
   ansible.builtin.template:
@@ -322,7 +346,6 @@
     - alertmanager
     - grafana-server
     - loki
-    - promtail
     - graphite_exporter
 
 - name: Wait for Prometheus to be healthy

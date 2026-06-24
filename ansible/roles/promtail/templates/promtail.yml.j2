@@ -1,0 +1,43 @@
+# Managed by Ansible (promtail role).
+# Ships this host's systemd journal (system + user units) to Loki on Hawkeye.
+
+server:
+  http_listen_port: {{ promtail_http_port }}
+  grpc_listen_port: {{ promtail_grpc_port }}
+
+positions:
+  # Tracks how far we've read so a restart doesn't re-ship or lose lines.
+  filename: /var/lib/promtail/positions.yaml
+
+clients:
+  - url: {{ promtail_loki_url }}
+
+scrape_configs:
+  # ---------------------------------------------------------------------------
+  # systemd journal: the single source for everything on a modern Debian box -
+  # systemd unit logs, kernel, auth, and (because we point at /var/log/journal)
+  # per-user journals too, which is where OpenClaw's `--user` service logs land.
+  # ---------------------------------------------------------------------------
+  - job_name: journal
+    journal:
+      path: {{ promtail_journal_path }}
+      max_age: {{ promtail_journal_max_age }}
+      json: false
+      labels:
+        job: systemd-journal
+        host: {{ promtail_host_label }}
+    relabel_configs:
+      # Promote the systemd unit to a queryable label, e.g.
+      #   {host="openclaw", unit="openclaw-gateway.service"}
+      - source_labels: ['__journal__systemd_unit']
+        target_label: unit
+      # User-session units (OpenClaw runs under a user manager) expose the unit
+      # under _SYSTEMD_USER_UNIT instead; map that when the system unit is empty.
+      - source_labels: ['__journal__systemd_user_unit']
+        target_label: user_unit
+      # Keep the syslog identifier (process name) for non-unit lines.
+      - source_labels: ['__journal_syslog_identifier']
+        target_label: syslog_identifier
+      # Hostname straight from the journal, as a backstop to the static label.
+      - source_labels: ['__journal__hostname']
+        target_label: nodename

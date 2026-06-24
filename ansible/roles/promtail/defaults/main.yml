@@ -1,0 +1,30 @@
+---
+# promtail: per-host log shipper. Tails the systemd journal (system + user) and
+# pushes log lines to Loki on Hawkeye. Loki itself + Grafana's Loki datasource
+# already live in the hawkeye role; this role is the missing "agent" side that
+# actually feeds logs in.
+#
+# Installed from the Grafana apt repo - the same source the hawkeye role uses
+# for its own promtail/loki, so the whole fleet stays on one tool and one repo.
+
+# Where Loki lives (Hawkeye). Overridable per-host but normally fleet-wide.
+promtail_loki_url: "http://{{ hawkeye_ip }}:3100/loki/api/v1/push"
+
+# Promtail's local HTTP server (health + metrics). LAN-local; not proxied.
+promtail_http_port: 9080
+promtail_grpc_port: 0  # 0 = disable gRPC server (we only push out)
+
+# Per-host label applied to every log stream this agent ships. Set in site.yml
+# to match the `host:` label convention used by the Prometheus scrape jobs, so
+# metrics and logs join on the same host name in Grafana.
+promtail_host_label: "{{ inventory_hostname }}"
+
+# Read the *entire* journal (system + per-user journals). OpenClaw runs as a
+# `--user` systemd service with linger, so its logs are in the user journal;
+# the default /run/log/journal path would miss them. /var/log/journal captures
+# both when persistent journald is on; we ensure that in tasks.
+promtail_journal_path: /var/log/journal
+
+# Max age of journal entries to read on first start (avoids replaying months
+# of history into Loki on initial rollout).
+promtail_journal_max_age: 12h

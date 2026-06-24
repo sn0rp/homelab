@@ -1,0 +1,119 @@
+---
+# promtail - per-host log shipper feeding Loki on Hawkeye.
+#
+# Hawkeye already runs Loki + the Grafana Loki datasource. This role installs
+# the agent side on each source host so logs actually flow in. Installed from
+# the Grafana apt repo (same source the hawkeye role uses for promtail/loki).
+
+# ---------------------------------------------------------------------------
+# Persistent journald: required so the journal survives reboots AND so the
+# per-user journal (OpenClaw's `--user` service) is written under
+# /var/log/journal where promtail's journal scraper can read it. Volatile-only
+# journald (/run/log/journal) would lose user logs and reset on reboot.
+# ---------------------------------------------------------------------------
+- name: Ensure persistent journald storage directory exists
+  ansible.builtin.file:
+    path: /var/log/journal
+    state: directory
+    mode: "2755"
+
+- name: Configure journald for persistent storage
+  ansible.builtin.copy:
+    dest: /etc/systemd/journald.conf.d/10-persistent.conf
+    mode: "0644"
+    content: |
+      # Managed by Ansible (promtail role)
+      [Journal]
+      Storage=persistent
+  register: journald_conf
+
+- name: Restart journald if storage mode changed
+  ansible.builtin.systemd:
+    name: systemd-journald
+    state: restarted
+  when: journald_conf is changed
+
+# ---------------------------------------------------------------------------
+# Grafana apt repo + promtail package (idempotent; matches hawkeye role).
+# ---------------------------------------------------------------------------
+- name: Install prerequisites
+  ansible.builtin.apt:
+    name:
+      - apt-transport-https
+      - gnupg
+      - curl
+    state: present
+    update_cache: yes
+
+- name: Add Grafana apt signing key
+  ansible.builtin.get_url:
+    url: https://apt.grafana.com/gpg.key
+    dest: /etc/apt/trusted.gpg.d/grafana.asc
+    mode: "0644"
+
+- name: Add Grafana apt repository
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/grafana.list
+    content: "deb [signed-by=/etc/apt/trusted.gpg.d/grafana.asc] https://apt.grafana.com stable main\n"
+  register: grafana_repo
+
+- name: Update apt cache after adding Grafana repo
+  ansible.builtin.apt:
+    update_cache: yes
+  when: grafana_repo.changed
+
+- name: Install promtail
+  ansible.builtin.apt:
+    name: promtail
+    state: present
+
+# ---------------------------------------------------------------------------
+# promtail needs to read the journal: add its service user to systemd-journal.
+# The package creates the `promtail` user; the apt unit runs as that user.
+# ---------------------------------------------------------------------------
+- name: Add promtail user to systemd-journal group (read the journal)
+  ansible.builtin.user:
+    name: promtail
+    groups: systemd-journal
+    append: yes
+  notify: Restart promtail
+
+- name: Ensure promtail positions/state directory exists
+  ansible.builtin.file:
+    path: /var/lib/promtail
+    state: directory
+    owner: promtail
+    group: promtail
+    mode: "0755"
+
+# ---------------------------------------------------------------------------
+# Config
+# ---------------------------------------------------------------------------
+- name: Deploy promtail config
+  ansible.builtin.template:
+    src: promtail.yml.j2
+    dest: /etc/promtail/config.yml
+    owner: promtail
+    group: promtail
+    mode: "0644"
+  notify: Restart promtail
+
+- name: Enable + start promtail
+  ansible.builtin.systemd:
+    name: promtail
+    enabled: yes
+    state: started
+    daemon_reload: yes
+
+# ---------------------------------------------------------------------------
+# Verify the agent is up locally. (We don't assert Loki ingestion here to keep
+# the role self-contained; Loki reachability is verified in the run notes.)
+# ---------------------------------------------------------------------------
+- name: Wait for promtail to be ready
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ promtail_http_port }}/ready"
+    status_code: 200
+  register: promtail_ready
+  until: promtail_ready.status == 200
+  retries: 6
+  delay: 3

@@ -1,0 +1,57 @@
+# Managed by Ansible (hawkeye role).
+# Single-binary Loki for the homelab. Receives pushes from per-host promtail
+# agents (promtail role) and serves the Grafana Loki datasource.
+#
+# Bound on all interfaces so LAN promtail agents (Proxmox host, LXCs, OpenClaw
+# VM) can push to {{ hawkeye_ip }}:3100. Grafana still queries it on 127.0.0.1.
+
+auth_enabled: false
+
+server:
+  http_listen_address: 0.0.0.0
+  http_listen_port: 3100
+  grpc_listen_port: 9096
+  log_level: info
+
+common:
+  instance_addr: 127.0.0.1
+  path_prefix: /var/lib/loki
+  storage:
+    filesystem:
+      chunks_directory: /var/lib/loki/chunks
+      rules_directory: /var/lib/loki/rules
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+schema_config:
+  configs:
+    - from: 2024-01-01
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+# Retention: keep {{ loki_retention_period }} of logs, then compact away. This
+# is a homelab log buffer for debugging, not a compliance archive.
+limits_config:
+  retention_period: {{ loki_retention_period }}
+  # Generous ingestion headroom for a small fleet; tune if pushes get rejected.
+  ingestion_rate_mb: 16
+  ingestion_burst_size_mb: 32
+  reject_old_samples: true
+  reject_old_samples_max_age: 168h
+
+compactor:
+  working_directory: /var/lib/loki/compactor
+  retention_enabled: true
+  delete_request_store: filesystem
+
+ruler:
+  storage:
+    type: local
+    local:
+      directory: /var/lib/loki/rules

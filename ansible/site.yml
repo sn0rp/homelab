@@ -25,6 +25,10 @@
       tags: monitoring, node_exporter, proxmox
     - role: pve_exporter
       tags: monitoring, pve_exporter, proxmox
+    - role: promtail
+      tags: monitoring, promtail, logs, proxmox
+      vars:
+        promtail_host_label: proxmox
 
 - name: Technitium LXC
   hosts: technitium
@@ -83,3 +87,21 @@
       tags: hawkeye
     - role: nas_watchdog
       tags: hawkeye, nas_watchdog, monitoring
+
+# ---------------------------------------------------------------------------
+# Log shipping: promtail on every host that produces logs worth keeping.
+# Loki + Grafana's Loki datasource live in the hawkeye role above; this is the
+# agent side feeding them. The `host` label per agent matches the `host:`
+# label convention of the Prometheus scrape jobs, so metrics and logs join on
+# the same host name in Grafana. The Proxmox host gets promtail in its own play
+# above. TrueNAS is intentionally excluded (it pushes Graphite metrics; its
+# logs add little here).
+- name: Log shippers - LXCs + OpenClaw VM + Hawkeye
+  hosts: technitium:provisioning:searxng:ntfy:openclaw:hawkeye
+  vars_files:
+    - vault.yml
+  roles:
+    - role: promtail
+      tags: monitoring, promtail, logs
+      vars:
+        promtail_host_label: "{{ inventory_hostname }}"

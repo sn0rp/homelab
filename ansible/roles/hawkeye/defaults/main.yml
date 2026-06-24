@@ -22,3 +22,6 @@ scrape_interval: "15s"
 # How long a target must be down before we declare an outage (flap guard).
 # blackbox probes every 15s; 90s = ~6 consecutive failures before alerting.
 outage_for: "90s"
+
+# Loki log retention. Homelab debugging buffer, not a compliance archive.
+loki_retention_period: "720h"  # 30 days
