@@ -1,0 +1,101 @@
+# Managed by Ansible (hawkeye role). Loki ruler LogQL alert rules.
+#
+# Log-based alerts that metrics cannot see, fired to the same Alertmanager that
+# routes Prometheus alerts to ntfy. These carry outage_class=logs so they route
+# to the dedicated homelab-logs ntfy topic (separate from outage alerts), and
+# the same summary/description annotations the ntfy webhook template renders.
+#
+# All hosts ship their systemd journal into Loki with a `host` label, so these
+# rules see every box (proxmox, hawkeye, the LXCs, openclaw).
+
+groups:
+  # -------------------------------------------------------------------------
+  # SSH auth failures / brute force
+  # -------------------------------------------------------------------------
+  - name: logs_ssh
+    rules:
+      # Sustained failed-password attempts on any host: a brute-force signal.
+      # sshd logs "Failed password for ..." / "Invalid user ..." to the journal.
+      - alert: SshBruteForce
+        expr: |
+          sum by (host) (
+            count_over_time(
+              {job="systemd-journal"}
+              |~ "(?i)(Failed password|Invalid user|authentication failure|Failed publickey)"
+              [5m]
+            )
+          ) > 20
+        for: 2m
+        labels:
+          severity: critical
+          outage_class: logs
+        annotations:
+          summary: "SSH brute-force on {{ '{{' }} $labels.host {{ '}}' }}"
+          description: "Over 20 SSH auth failures in 5m on {{ '{{' }} $labels.host {{ '}}' }}. Possible brute-force - check source IPs and consider blocking."
+
+      # A successful root login right after a burst of failures is worth knowing
+      # about on its own (lower bar, informational urgency via warning).
+      - alert: SshFailureSpike
+        expr: |
+          sum by (host) (
+            count_over_time(
+              {job="systemd-journal"}
+              |~ "(?i)(Failed password|Invalid user)"
+              [5m]
+            )
+          ) > 5
+        for: 5m
+        labels:
+          severity: warning
+          outage_class: logs
+        annotations:
+          summary: "Elevated SSH auth failures on {{ '{{' }} $labels.host {{ '}}' }}"
+          description: "More than 5 SSH auth failures in 5m on {{ '{{' }} $labels.host {{ '}}' }}. Not yet brute-force territory, but watch it."
+
+  # -------------------------------------------------------------------------
+  # systemd units entering failed state
+  # -------------------------------------------------------------------------
+  - name: logs_systemd
+    rules:
+      # systemd logs "Failed with result" / "entered failed state" when a unit
+      # dies. Fires per host on any such line.
+      - alert: SystemdUnitFailed
+        expr: |
+          sum by (host) (
+            count_over_time(
+              {job="systemd-journal"}
+              |~ "(?i)(entered failed state|Failed with result|Start request repeated too quickly)"
+              [5m]
+            )
+          ) > 0
+        for: 1m
+        labels:
+          severity: critical
+          outage_class: logs
+        annotations:
+          summary: "systemd unit failed on {{ '{{' }} $labels.host {{ '}}' }}"
+          description: "A systemd unit entered a failed state on {{ '{{' }} $labels.host {{ '}}' }} in the last 5m. Check 'systemctl --failed' on that host."
+
+  # -------------------------------------------------------------------------
+  # OOM kills - the silent homelab killer
+  # -------------------------------------------------------------------------
+  - name: logs_oom
+    rules:
+      # Kernel logs "Out of memory: Killed process" / "oom-kill:" / "invoked
+      # oom-killer" when the OOM killer reaps a process.
+      - alert: OutOfMemoryKill
+        expr: |
+          sum by (host) (
+            count_over_time(
+              {job="systemd-journal"}
+              |~ "(?i)(Out of memory: Killed process|oom-kill:|invoked oom-killer)"
+              [5m]
+            )
+          ) > 0
+        for: 1m
+        labels:
+          severity: critical
+          outage_class: logs
+        annotations:
+          summary: "OOM kill on {{ '{{' }} $labels.host {{ '}}' }}"
+          description: "The kernel OOM killer reaped a process on {{ '{{' }} $labels.host {{ '}}' }}. Something is over-committing memory - check which service died and its limits."

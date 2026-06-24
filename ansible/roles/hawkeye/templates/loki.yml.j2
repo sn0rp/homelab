@@ -50,8 +50,20 @@ compactor:
   retention_enabled: true
   delete_request_store: filesystem
 
+# Ruler: evaluates LogQL alerting rules (log-based alerts: SSH brute-force,
+# failed systemd units, OOM kills) and fires them to the SAME Alertmanager that
+# already routes Prometheus alerts to ntfy. Rules live under
+# /var/lib/loki/rules/fake/ ('fake' is the tenant dir name when auth_enabled is
+# false - Loki's single-tenant placeholder).
 ruler:
   storage:
     type: local
     local:
       directory: /var/lib/loki/rules
+  rule_path: /var/lib/loki/rules-temp
+  alertmanager_url: http://127.0.0.1:9093
+  enable_alertmanager_v2: true
+  enable_api: true
+  # How often the ruler evaluates the LogQL rules.
+  evaluation_interval: 1m
+  poll_interval: 1m

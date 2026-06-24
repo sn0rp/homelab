@@ -25,6 +25,10 @@ public_anchors:
 
 # ntfy topic the phone subscribes to for outage alerts
 ntfy_outage_topic: spectrum-outage
+# ntfy topic for log-based alerts (SSH brute-force, failed systemd units, OOM
+# kills) from the Loki ruler. Separate topic so log noise can be tuned/muted
+# independently of the "internet is down" outage alerts.
+ntfy_logs_topic: homelab-logs
 
 # --- Observability exporters (Proxmox + NAS) ---
 # node_exporter + pve_exporter run on the Proxmox host; graphite_exporter runs

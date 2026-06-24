@@ -14,6 +14,16 @@ route:
   # Re-notify every 30m during a sustained outage so you are reminded.
   repeat_interval: 30m
   routes:
+    # Log-based alerts (Loki ruler) -> dedicated homelab-logs topic. MUST come
+    # before the severity=critical route below, since these are also critical;
+    # first-match wins in Alertmanager, so the more specific outage_class match
+    # has to be listed first or log alerts would land on the outage topic.
+    - matchers:
+        - outage_class = "logs"
+      receiver: ntfy-logs
+      group_by: ["host", "alertname"]
+      # Logs are bursty; don't re-nag as aggressively as an outage.
+      repeat_interval: 2h
     - matchers:
         - severity = "critical"
       receiver: ntfy-outage
@@ -51,6 +61,21 @@ receivers:
       # .annotations.summary%7D%7D etc. send_resolved=true still delivers the
       # recovery notice. ntfy is behind nginx TLS; hostname matches wildcard cert.
       - url: "https://ntfy.snorp.dev/{{ ntfy_outage_topic }}?tpl=yes&title=%7B%7Bif%20eq%20.status%20%22firing%22%7D%7DOUTAGE%3A%20%7B%7Belse%7D%7DRESOLVED%3A%20%7B%7Bend%7D%7D%7B%7B%28index%20.alerts%200%29.annotations.summary%7D%7D&message=%7B%7B%28index%20.alerts%200%29.annotations.description%7D%7D&priority=%7B%7Bif%20eq%20.status%20%22firing%22%7D%7Durgent%7B%7Belse%7D%7Ddefault%7B%7Bend%7D%7D"
+        send_resolved: true
+        max_alerts: 0
+        http_config:
+          tls_config:
+            insecure_skip_verify: false
+
+  # Log-based alerts (Loki ruler) -> homelab-logs topic. Same percent-encoded
+  # ntfy template trick as ntfy-outage (see the long lesson above: Alertmanager
+  # templates this URL itself, so braces MUST stay percent-encoded or the send
+  # fails). Only the topic and the firing prefix differ: "LOG ALERT:" vs
+  # "RESOLVED:". Default priority (not urgent) - log alerts inform, they are not
+  # the "internet is down" klaxon.
+  - name: ntfy-logs
+    webhook_configs:
+      - url: "https://ntfy.snorp.dev/{{ ntfy_logs_topic }}?tpl=yes&title=%7B%7Bif%20eq%20.status%20%22firing%22%7D%7DLOG%20ALERT%3A%20%7B%7Belse%7D%7DRESOLVED%3A%20%7B%7Bend%7D%7D%7B%7B%28index%20.alerts%200%29.annotations.summary%7D%7D&message=%7B%7B%28index%20.alerts%200%29.annotations.description%7D%7D&priority=%7B%7Bif%20eq%20.status%20%22firing%22%7D%7Dhigh%7B%7Belse%7D%7Ddefault%7B%7Bend%7D%7D"
         send_resolved: true
         max_alerts: 0
         http_config:

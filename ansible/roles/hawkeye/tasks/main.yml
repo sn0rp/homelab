@@ -287,10 +287,31 @@
     group: loki
     mode: "0755"
 
+- name: Ensure Loki ruler directories exist (tenant rules + temp)
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: loki
+    group: loki
+    mode: "0755"
+  loop:
+    - /var/lib/loki/rules
+    - /var/lib/loki/rules/fake   # single-tenant dir name when auth_enabled=false
+    - /var/lib/loki/rules-temp
+
 - name: Deploy Loki config
   ansible.builtin.template:
     src: loki.yml.j2
     dest: /etc/loki/config.yml
+    owner: loki
+    group: loki
+    mode: "0644"
+  notify: Restart loki
+
+- name: Deploy Loki LogQL alert rules (SSH brute-force, failed units, OOM)
+  ansible.builtin.template:
+    src: loki_rules.yml.j2
+    dest: /var/lib/loki/rules/fake/log_alerts.yml
     owner: loki
     group: loki
     mode: "0644"
