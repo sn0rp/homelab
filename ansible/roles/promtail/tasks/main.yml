@@ -4,29 +4,31 @@
 # Hawkeye already runs Loki + the Grafana Loki datasource. This role installs
 # the agent side on each source host so logs actually flow in. Installed from
 # the Grafana apt repo (same source the hawkeye role uses for promtail/loki).
+#
+# These hosts run journald, NOT rsyslog (/var/log/syslog is an empty leftover),
+# so the systemd journal is the single real log source. promtail reads
+# /var/log/journal, which requires both persistent journald storage AND
+# promtail being in the systemd-journal group, both enforced below BEFORE the
+# readiness check.
 
 # ---------------------------------------------------------------------------
-# Persistent journald: required so the journal survives reboots AND so the
-# per-user journal (OpenClaw's `--user` service) is written under
-# /var/log/journal where promtail's journal scraper can read it. Volatile-only
-# journald (/run/log/journal) would lose user logs and reset on reboot.
+# Persistent journald: the journal must be on disk at /var/log/journal (not
+# volatile /run/log/journal) so it survives reboots and so promtail's journal
+# reader has a stable path. Also captures per-user journals (OpenClaw's --user
+# gateway service).
 # ---------------------------------------------------------------------------
-# Persistent journald is only relevant when we actually read the journal
-# (promtail_read_journal=true) - e.g. the OpenClaw VM. Skipped elsewhere so we
-# don't touch journald config on hosts that only tail /var/log/syslog.
 - name: Ensure persistent journald storage directory exists
   ansible.builtin.file:
     path: /var/log/journal
     state: directory
+    group: systemd-journal
     mode: "2755"
-  when: promtail_read_journal | default(false)
 
 - name: Ensure journald drop-in directory exists
   ansible.builtin.file:
     path: /etc/systemd/journald.conf.d
     state: directory
     mode: "0755"
-  when: promtail_read_journal | default(false)
 
 - name: Configure journald for persistent storage
   ansible.builtin.copy:
@@ -37,15 +39,12 @@
       [Journal]
       Storage=persistent
   register: journald_conf
-  when: promtail_read_journal | default(false)
 
 - name: Restart journald if storage mode changed
   ansible.builtin.systemd:
     name: systemd-journald
     state: restarted
-  when:
-    - promtail_read_journal | default(false)
-    - journald_conf is changed
+  when: journald_conf is changed
 
 # ---------------------------------------------------------------------------
 # Grafana apt repo + promtail package (idempotent; matches hawkeye role).
@@ -82,16 +81,11 @@
     state: present
 
 # ---------------------------------------------------------------------------
-# promtail user/group. The apt package creates the promtail user (uid varies),
-# but does NOT reliably create a same-named primary `promtail` group, so any
-# chown to group=promtail fails with 'failed to look up group promtail'. Same
-# class of bug as the loki user earlier: never assume the package made the
-# user/group, and never let the `user` module modify a live service account
-# (usermod refuses while the service is running).
-#
-# So: guarantee the group idempotently, then a create-only user task that also
-# adds promtail to its group + systemd-journal (to read the journal), tolerating
-# the 'currently used by process' refusal when the service is already running.
+# promtail user/group. The apt package creates the promtail user but not a
+# same-named primary `promtail` group, so chown to group=promtail fails. Create
+# the group idempotently, then a create-only user task that also adds promtail
+# to systemd-journal (required to READ /var/log/journal), tolerating the
+# 'currently used by process' refusal when the service is already running.
 - name: Ensure promtail group exists
   ansible.builtin.group:
     name: promtail
@@ -110,7 +104,6 @@
   failed_when:
     - promtail_user is failed
     - "'is currently used by process' not in (promtail_user.msg | default(''))"
-  notify: Restart promtail
 
 - name: Ensure promtail positions/state directory exists
   ansible.builtin.file:
@@ -119,6 +112,32 @@
     owner: promtail
     group: promtail
     mode: "0755"
+
+# ---------------------------------------------------------------------------
+# The packaged promtail systemd unit runs as User=promtail with a hardened
+# sandbox. Add a drop-in to guarantee it has the SupplementaryGroups and read
+# access needed for the journal (some packaged units set DynamicUser/strict
+# sandboxing that drops the systemd-journal group at runtime).
+# ---------------------------------------------------------------------------
+- name: Ensure promtail systemd drop-in directory exists
+  ansible.builtin.file:
+    path: /etc/systemd/system/promtail.service.d
+    state: directory
+    mode: "0755"
+
+- name: Grant promtail journal read access via systemd drop-in
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/promtail.service.d/10-journal-access.conf
+    mode: "0644"
+    content: |
+      # Managed by Ansible (promtail role)
+      # Ensure the promtail process can read the systemd journal.
+      [Service]
+      SupplementaryGroups=systemd-journal
+      # Relax any DynamicUser so the static promtail user + group membership
+      # actually applies (DynamicUser would ignore our systemd-journal add).
+      DynamicUser=no
+  register: promtail_dropin
 
 # ---------------------------------------------------------------------------
 # Config
@@ -130,24 +149,24 @@
     owner: promtail
     group: promtail
     mode: "0644"
-  notify: Restart promtail
+  register: promtail_config
 
-- name: Enable + start promtail
+# ---------------------------------------------------------------------------
+# Restart NOW (not via end-of-play handler) so the new group membership, drop-in
+# and config are live before the readiness check below.
+# ---------------------------------------------------------------------------
+- name: Reload systemd + restart promtail to apply journal access and config
   ansible.builtin.systemd:
     name: promtail
+    state: restarted
     enabled: yes
-    state: started
     daemon_reload: yes
 
-# ---------------------------------------------------------------------------
-# Verify the agent is up locally. (We don't assert Loki ingestion here to keep
-# the role self-contained; Loki reachability is verified in the run notes.)
-# ---------------------------------------------------------------------------
 - name: Wait for promtail to be ready
   ansible.builtin.uri:
     url: "http://127.0.0.1:{{ promtail_http_port }}/ready"
     status_code: 200
   register: promtail_ready
   until: promtail_ready.status == 200
-  retries: 6
+  retries: 10
   delay: 3
