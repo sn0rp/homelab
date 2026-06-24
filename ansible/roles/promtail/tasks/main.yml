@@ -11,17 +11,22 @@
 # /var/log/journal where promtail's journal scraper can read it. Volatile-only
 # journald (/run/log/journal) would lose user logs and reset on reboot.
 # ---------------------------------------------------------------------------
+# Persistent journald is only relevant when we actually read the journal
+# (promtail_read_journal=true) - e.g. the OpenClaw VM. Skipped elsewhere so we
+# don't touch journald config on hosts that only tail /var/log/syslog.
 - name: Ensure persistent journald storage directory exists
   ansible.builtin.file:
     path: /var/log/journal
     state: directory
     mode: "2755"
+  when: promtail_read_journal | default(false)
 
 - name: Ensure journald drop-in directory exists
   ansible.builtin.file:
     path: /etc/systemd/journald.conf.d
     state: directory
     mode: "0755"
+  when: promtail_read_journal | default(false)
 
 - name: Configure journald for persistent storage
   ansible.builtin.copy:
@@ -32,12 +37,15 @@
       [Journal]
       Storage=persistent
   register: journald_conf
+  when: promtail_read_journal | default(false)
 
 - name: Restart journald if storage mode changed
   ansible.builtin.systemd:
     name: systemd-journald
     state: restarted
-  when: journald_conf is changed
+  when:
+    - promtail_read_journal | default(false)
+    - journald_conf is changed
 
 # ---------------------------------------------------------------------------
 # Grafana apt repo + promtail package (idempotent; matches hawkeye role).

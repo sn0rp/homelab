@@ -1,5 +1,12 @@
 # Managed by Ansible (promtail role).
-# Ships this host's systemd journal (system + user units) to Loki on Hawkeye.
+# Ships this host's logs to Loki on Hawkeye.
+#
+# Primary source is the rsyslog file /var/log/syslog: it always exists and is
+# populated on these Debian/community-script containers and the Proxmox host,
+# and (unlike the systemd journal in an unprivileged LXC) needs no special
+# volume passthrough or journal permissions. We optionally ALSO read the
+# journal where it is genuinely available, but the syslog tail is what keeps
+# the agent healthy everywhere.
 
 server:
   http_listen_port: {{ promtail_http_port }}
@@ -14,9 +21,33 @@ clients:
 
 scrape_configs:
   # ---------------------------------------------------------------------------
-  # systemd journal: the single source for everything on a modern Debian box -
-  # systemd unit logs, kernel, auth, and (because we point at /var/log/journal)
-  # per-user journals too, which is where OpenClaw's `--user` service logs land.
+  # rsyslog files: the always-present, always-populated log source on Debian.
+  # Captures syslog + auth. This is the reliable primary that works identically
+  # on the Proxmox host and every LXC, privileged or not.
+  # ---------------------------------------------------------------------------
+  - job_name: syslog
+    static_configs:
+      - targets: [localhost]
+        labels:
+          job: syslog
+          host: {{ promtail_host_label }}
+          __path__: /var/log/syslog
+
+  - job_name: auth
+    static_configs:
+      - targets: [localhost]
+        labels:
+          job: auth
+          host: {{ promtail_host_label }}
+          __path__: /var/log/auth.log
+
+{% if promtail_read_journal | default(false) %}
+  # ---------------------------------------------------------------------------
+  # systemd journal (opt-in via promtail_read_journal=true). Only enable where
+  # the journal is persistent AND readable by promtail - e.g. the OpenClaw VM,
+  # whose `--user` gateway service logs live in the user journal and are NOT in
+  # /var/log/syslog. Left off by default because unprivileged LXCs often expose
+  # no readable journal, which makes promtail report "no logs to tail".
   # ---------------------------------------------------------------------------
   - job_name: journal
     journal:
@@ -27,17 +58,12 @@ scrape_configs:
         job: systemd-journal
         host: {{ promtail_host_label }}
     relabel_configs:
-      # Promote the systemd unit to a queryable label, e.g.
-      #   {host="openclaw", unit="openclaw-gateway.service"}
       - source_labels: ['__journal__systemd_unit']
         target_label: unit
-      # User-session units (OpenClaw runs under a user manager) expose the unit
-      # under _SYSTEMD_USER_UNIT instead; map that when the system unit is empty.
       - source_labels: ['__journal__systemd_user_unit']
         target_label: user_unit
-      # Keep the syslog identifier (process name) for non-unit lines.
       - source_labels: ['__journal_syslog_identifier']
         target_label: syslog_identifier
-      # Hostname straight from the journal, as a backstop to the static label.
       - source_labels: ['__journal__hostname']
         target_label: nodename
+{% endif %}

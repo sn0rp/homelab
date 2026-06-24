@@ -96,8 +96,8 @@
 # the same host name in Grafana. The Proxmox host gets promtail in its own play
 # above. TrueNAS is intentionally excluded (it pushes Graphite metrics; its
 # logs add little here).
-- name: Log shippers - LXCs + OpenClaw VM + Hawkeye
-  hosts: technitium:provisioning:searxng:ntfy:openclaw:hawkeye
+- name: Log shippers - LXCs + Hawkeye (syslog only)
+  hosts: technitium:provisioning:searxng:ntfy:hawkeye
   vars_files:
     - vault.yml
   roles:
@@ -105,3 +105,17 @@
       tags: monitoring, promtail, logs
       vars:
         promtail_host_label: "{{ inventory_hostname }}"
+
+# OpenClaw VM: also read the journal, because its gateway runs as a `--user`
+# systemd service whose logs are journal-only (not in /var/log/syslog). It is a
+# full VM, not an unprivileged LXC, so the journal is readable.
+- name: Log shipper - OpenClaw VM (syslog + journal)
+  hosts: openclaw
+  vars_files:
+    - vault.yml
+  roles:
+    - role: promtail
+      tags: monitoring, promtail, logs
+      vars:
+        promtail_host_label: openclaw
+        promtail_read_journal: true

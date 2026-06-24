@@ -19,10 +19,17 @@ promtail_grpc_port: 0  # 0 = disable gRPC server (we only push out)
 # metrics and logs join on the same host name in Grafana.
 promtail_host_label: "{{ inventory_hostname }}"
 
-# Read the *entire* journal (system + per-user journals). OpenClaw runs as a
-# `--user` systemd service with linger, so its logs are in the user journal;
-# the default /run/log/journal path would miss them. /var/log/journal captures
-# both when persistent journald is on; we ensure that in tasks.
+# Whether to also tail the systemd journal in addition to /var/log/syslog.
+# Default OFF: unprivileged LXCs frequently expose no readable journal, which
+# makes promtail report "Unable to find any logs to tail" and stay unhealthy.
+# Turn ON only for hosts whose important logs are journal-only - notably the
+# OpenClaw VM, whose `--user` gateway service logs are NOT in /var/log/syslog.
+promtail_read_journal: false
+
+# Read the *entire* journal (system + per-user journals) when journal reading is
+# enabled. OpenClaw runs as a `--user` systemd service with linger, so its logs
+# are in the user journal; /var/log/journal captures both when persistent
+# journald is on (ensured in tasks, gated on promtail_read_journal).
 promtail_journal_path: /var/log/journal
 
 # Max age of journal entries to read on first start (avoids replaying months
