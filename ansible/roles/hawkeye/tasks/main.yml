@@ -255,17 +255,29 @@
 # this rather than relying on the apt package default so ingestion is
 # deterministic and version-controlled.
 
-# The grafana `loki` apt package does not reliably create the loki system
-# user/group on install (varies by package version), so we create it
-# explicitly before any chown - same pattern as the prometheus/graphite_exporter
-# users above. Idempotent if the package already made it.
-- name: Create loki system user/group
+# The grafana `loki` apt package creates the loki user/group on install, but
+# the chgrp can race ahead of it on a fresh box. We only need to GUARANTEE the
+# group exists before chowning - we do NOT manage the existing user's shell/
+# home, because `usermod` refuses to touch a user whose service is already
+# running (it is, as PID-owning loki.service). The group task is idempotent and
+# safe whether or not the package already created it.
+- name: Ensure loki group exists
+  ansible.builtin.group:
+    name: loki
+    system: yes
+
+- name: Ensure loki system user exists (create only, never modify live user)
   ansible.builtin.user:
     name: loki
+    group: loki
     system: yes
     shell: /usr/sbin/nologin
     home: /var/lib/loki
     create_home: no
+  register: loki_user
+  failed_when:
+    - loki_user is failed
+    - "'is currently used by process' not in (loki_user.msg | default(''))"
 
 - name: Ensure Loki data directory exists
   ansible.builtin.file:
