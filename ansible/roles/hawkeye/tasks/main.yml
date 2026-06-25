@@ -94,6 +94,34 @@
 # ---------------------------------------------------------------------------
 # Config files
 # ---------------------------------------------------------------------------
+# Allow unprivileged ICMP sockets so blackbox's icmp_v4 module can open a ping
+# socket directly instead of failing-then-falling-back to a raw privileged
+# socket. Without this, every probe logs "Unable to do unprivileged listen on
+# socket, will attempt privileged" - the probe still works (blackbox runs as
+# root) but the log is noise. ping_group_range 0..2^31-1 permits all groups.
+# NOTE: in an unprivileged LXC this sysctl may be read-only (namespaced); the
+# task tolerates that since the privileged fallback keeps probes working.
+- name: Persist unprivileged-ICMP sysctl (silences blackbox fallback noise)
+  ansible.builtin.copy:
+    dest: /etc/sysctl.d/90-blackbox-icmp.conf
+    mode: "0644"
+    content: |
+      # Managed by Ansible (hawkeye role)
+      # Permit unprivileged ICMP ping sockets so blackbox's icmp_v4 module opens
+      # a ping socket directly instead of failing-then-falling-back to a raw
+      # privileged socket (which logged a benign error every probe).
+      net.ipv4.ping_group_range = 0 2147483647
+  notify: Restart blackbox_exporter
+
+# Apply it now. In an unprivileged LXC this proc path may be read-only
+# (namespaced sysctl); tolerate failure since the privileged fallback keeps
+# probes working regardless - this only removes log noise.
+- name: Apply unprivileged-ICMP sysctl now
+  ansible.builtin.shell: sysctl -w net.ipv4.ping_group_range="0 2147483647"
+  register: icmp_sysctl
+  changed_when: "'ping_group_range' in icmp_sysctl.stdout"
+  failed_when: false
+
 - name: Deploy blackbox_exporter config
   ansible.builtin.copy:
     src: blackbox.yml
