@@ -52,11 +52,17 @@ scrape_configs:
       # exact phrases our alert rules hunt for ("oom-kill:", "entered failed
       # state", "Failed password"). Shipping that back into Loki makes the rules
       # match their own evaluation logs => infinite self-triggering false
-      # alerts. Drop loki/promtail/alertmanager/prometheus units entirely; we
-      # never alert on the monitoring plumbing from its own log text anyway.
-      - match:
-          selector: '{unit=~"(loki|promtail|alertmanager|prometheus|grafana-server|blackbox_exporter|graphite_exporter)\.service"}'
-          action: drop
-      - match:
-          selector: '{syslog_identifier=~"(loki|promtail|alertmanager|prometheus)"}'
-          action: drop
+      # alerts. Drop the monitoring plumbing's own journal entirely.
+      #
+      # Uses the `drop` stage matching on the `unit` / `syslog_identifier`
+      # labels set by relabel_configs above (more robust than a `match` stage
+      # with a LogQL selector, which validates labels at parse time and refuses
+      # to start if anything is off).
+      - drop:
+          source: unit
+          expression: '(loki|promtail|alertmanager|prometheus|grafana-server|blackbox_exporter|graphite_exporter)\.service'
+          drop_counter_reason: monitoring_self_log
+      - drop:
+          source: syslog_identifier
+          expression: '(loki|promtail|alertmanager|prometheus)'
+          drop_counter_reason: monitoring_self_log
