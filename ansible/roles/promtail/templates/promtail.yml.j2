@@ -46,3 +46,17 @@ scrape_configs:
         target_label: syslog_identifier
       - source_labels: ['__journal__hostname']
         target_label: nodename
+    pipeline_stages:
+      # CRITICAL: drop the monitoring stack's own logs. Loki's ruler logs every
+      # rule evaluation INCLUDING the full LogQL query text - which contains the
+      # exact phrases our alert rules hunt for ("oom-kill:", "entered failed
+      # state", "Failed password"). Shipping that back into Loki makes the rules
+      # match their own evaluation logs => infinite self-triggering false
+      # alerts. Drop loki/promtail/alertmanager/prometheus units entirely; we
+      # never alert on the monitoring plumbing from its own log text anyway.
+      - match:
+          selector: '{unit=~"(loki|promtail|alertmanager|prometheus|grafana-server|blackbox_exporter|graphite_exporter)\.service"}'
+          action: drop
+      - match:
+          selector: '{syslog_identifier=~"(loki|promtail|alertmanager|prometheus)"}'
+          action: drop

@@ -1,70 +1,83 @@
 # Managed by Ansible (hawkeye role). Loki ruler LogQL alert rules.
 #
 # Log-based alerts that metrics cannot see, fired to the same Alertmanager that
-# routes Prometheus alerts to ntfy. These carry outage_class=logs so they route
-# to the dedicated homelab-logs ntfy topic (separate from outage alerts), and
-# the same summary/description annotations the ntfy webhook template renders.
+# routes Prometheus alerts to ntfy. outage_class=logs routes them to the
+# dedicated homelab-logs ntfy topic, with the summary/description annotations
+# the ntfy webhook template renders.
 #
-# All hosts ship their systemd journal into Loki with a `host` label, so these
-# rules see every box (proxmox, hawkeye, the LXCs, openclaw).
+# IMPORTANT - self-trigger guard: Loki's ruler logs every rule evaluation, and
+# that log line contains the full LogQL query text (including the very phrases
+# these rules hunt for). The promtail role drops the monitoring stack's own
+# journal (loki/promtail/alertmanager/prometheus units) so those lines never
+# reach Loki. As a SECOND layer of defense, every rule below also excludes any
+# line mentioning systemd-journal/ruler/query echoes, so a stray monitoring log
+# can never self-trigger an alert.
 
 groups:
   # -------------------------------------------------------------------------
   # SSH auth failures / brute force
   # -------------------------------------------------------------------------
+  # NOTE on thresholds: each failed SSH attempt emits SEVERAL journal lines
+  # (Failed password + PAM auth failure + Connection closed, etc). A handful of
+  # mistyped logins easily produces 20+ lines, so thresholds are set well above
+  # incidental fat-fingering - a real brute-force produces hundreds per minute.
   - name: logs_ssh
     rules:
-      # Sustained failed-password attempts on any host: a brute-force signal.
-      # sshd logs "Failed password for ..." / "Invalid user ..." to the journal.
       - alert: SshBruteForce
         expr: |
           sum by (host) (
             count_over_time(
-              {job="systemd-journal"}
+              {job="systemd-journal"} |~ "(?i)sshd"
               |~ "(?i)(Failed password|Invalid user|authentication failure|Failed publickey)"
+              != "query"
               [5m]
             )
-          ) > 20
+          ) > 100
         for: 2m
         labels:
           severity: critical
           outage_class: logs
         annotations:
           summary: "SSH brute-force on {{ '{{' }} $labels.host {{ '}}' }}"
-          description: "Over 20 SSH auth failures in 5m on {{ '{{' }} $labels.host {{ '}}' }}. Possible brute-force - check source IPs and consider blocking."
+          description: "Over 100 SSH auth-failure log lines in 5m on {{ '{{' }} $labels.host {{ '}}' }}. Almost certainly a brute-force - check source IPs and consider blocking at the router."
 
-      # A successful root login right after a burst of failures is worth knowing
-      # about on its own (lower bar, informational urgency via warning).
       - alert: SshFailureSpike
         expr: |
           sum by (host) (
             count_over_time(
-              {job="systemd-journal"}
+              {job="systemd-journal"} |~ "(?i)sshd"
               |~ "(?i)(Failed password|Invalid user)"
-              [5m]
+              != "query"
+              [10m]
             )
-          ) > 5
+          ) > 30
         for: 5m
         labels:
           severity: warning
           outage_class: logs
         annotations:
           summary: "Elevated SSH auth failures on {{ '{{' }} $labels.host {{ '}}' }}"
-          description: "More than 5 SSH auth failures in 5m on {{ '{{' }} $labels.host {{ '}}' }}. Not yet brute-force territory, but watch it."
+          description: "More than 30 SSH auth-failure log lines in 10m on {{ '{{' }} $labels.host {{ '}}' }}. Not yet brute-force territory, but worth a look."
 
   # -------------------------------------------------------------------------
   # systemd units entering failed state
   # -------------------------------------------------------------------------
   - name: logs_systemd
     rules:
-      # systemd logs "Failed with result" / "entered failed state" when a unit
-      # dies. Fires per host on any such line.
+      # Anchored to systemd's real failure line format:
+      #   "<unit>.service: Failed with result '<reason>'."
+      #   "<unit>.service: Start request repeated too quickly."
+      # The "\\.service:" anchor means it only matches an actual unit-status
+      # line, not arbitrary text containing the word "failed". The != filters
+      # exclude monitoring/query echoes as a backstop.
       - alert: SystemdUnitFailed
         expr: |
           sum by (host) (
             count_over_time(
               {job="systemd-journal"}
-              |~ "(?i)(entered failed state|Failed with result|Start request repeated too quickly)"
+              |~ `\.service: (Failed with result|Start request repeated too quickly)`
+              != "query"
+              != "count_over_time"
               [5m]
             )
           ) > 0
@@ -74,21 +87,27 @@ groups:
           outage_class: logs
         annotations:
           summary: "systemd unit failed on {{ '{{' }} $labels.host {{ '}}' }}"
-          description: "A systemd unit entered a failed state on {{ '{{' }} $labels.host {{ '}}' }} in the last 5m. Check 'systemctl --failed' on that host."
+          description: "A systemd unit entered a failed state on {{ '{{' }} $labels.host {{ '}}' }} in the last 5m. Run 'systemctl --failed' and 'journalctl -p err -b' on that host."
 
   # -------------------------------------------------------------------------
   # OOM kills - the silent homelab killer
   # -------------------------------------------------------------------------
   - name: logs_oom
     rules:
-      # Kernel logs "Out of memory: Killed process" / "oom-kill:" / "invoked
-      # oom-killer" when the OOM killer reaps a process.
+      # Anchored to the kernel's real OOM line, which always names a killed PID:
+      #   "Out of memory: Killed process 1234 (name) ..."
+      #   "oom-kill:constraint=..."
+      # Requiring the PID/constraint context after the phrase means a log line
+      # that merely quotes the phrase (like a query echo) will not match. The
+      # != filters are a second backstop.
       - alert: OutOfMemoryKill
         expr: |
           sum by (host) (
             count_over_time(
               {job="systemd-journal"}
-              |~ "(?i)(Out of memory: Killed process|oom-kill:|invoked oom-killer)"
+              |~ `(Out of memory: Killed process [0-9]+|oom-kill:constraint=|invoked oom-killer:)`
+              != "query"
+              != "count_over_time"
               [5m]
             )
           ) > 0
@@ -98,4 +117,4 @@ groups:
           outage_class: logs
         annotations:
           summary: "OOM kill on {{ '{{' }} $labels.host {{ '}}' }}"
-          description: "The kernel OOM killer reaped a process on {{ '{{' }} $labels.host {{ '}}' }}. Something is over-committing memory - check which service died and its limits."
+          description: "The kernel OOM killer reaped a process on {{ '{{' }} $labels.host {{ '}}' }}. Something over-committed memory - check which service died and its limits."
