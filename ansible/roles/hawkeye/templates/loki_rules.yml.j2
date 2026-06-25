@@ -69,7 +69,10 @@ groups:
       #   "<unit>.service: Start request repeated too quickly."
       # The "\\.service:" anchor means it only matches an actual unit-status
       # line, not arbitrary text containing the word "failed". The != filters
-      # exclude monitoring/query echoes as a backstop.
+      # exclude monitoring/query echoes AND the monitoring stack's own units
+      # (promtail/loki/etc) - a promtail restart blip logs "promtail.service:
+      # Failed with result" and we do not want to page ourselves for the
+      # monitoring plumbing recovering.
       - alert: SystemdUnitFailed
         expr: |
           sum by (host) (
@@ -78,6 +81,7 @@ groups:
               |~ `\.service: (Failed with result|Start request repeated too quickly)`
               != "query"
               != "count_over_time"
+              !~ `(loki|promtail|alertmanager|prometheus|grafana-server|blackbox_exporter|graphite_exporter)\.service`
               [5m]
             )
           ) > 0
