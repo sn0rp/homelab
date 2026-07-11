@@ -1,5 +1,5 @@
 # Managed by Ansible (hawkeye role).
-# Hardware / infrastructure alerts for Proxmox + TrueNAS NAS. Routed to ntfy
+# Hardware / infrastructure alerts for Proxmox + TrueNAS NAS. Routed to Discord
 # via Alertmanager (severity=critical). Thresholds per Benj's hardware:
 #   - Seagate Ironwolf 8TB: datasheet max 65C, "not recommended" sustained >60C
 #   - NVMe: throttles ~70C+
@@ -116,7 +116,7 @@ groups:
       # temperatures, SMART, or ZFS pool health. Those safety-critical signals -
       # the Ironwolf 60C alert and the loose-SATA-cable pool-degraded watchdog -
       # are handled on the TrueNAS box via a midclt watchdog that pushes
-      # directly to ntfy (see nas_watchdog role). Only metrics that genuinely
+      # directly to Discord (see nas_watchdog role). Only metrics that genuinely
       # exist in the Graphite stream are alerted on here.
 
       # ---- CPU temperature (cputemp IS in the stream) ----

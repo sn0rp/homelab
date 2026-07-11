@@ -70,14 +70,6 @@
     - role: openclaw
       tags: openclaw
 
-- name: ntfy LXC (alert path)
-  hosts: ntfy
-  vars_files:
-    - vault.yml
-  roles:
-    - role: ntfy
-      tags: ntfy
-
 - name: Hawkeye monitoring LXC
   hosts: hawkeye
   vars_files:
@@ -97,7 +89,7 @@
 # above. TrueNAS is intentionally excluded (it pushes Graphite metrics; its
 # logs add little here).
 - name: Log shippers - LXCs + OpenClaw VM + Hawkeye
-  hosts: technitium:provisioning:searxng:ntfy:openclaw:hawkeye
+  hosts: technitium:provisioning:searxng:openclaw:hawkeye
   vars_files:
     - vault.yml
   roles:

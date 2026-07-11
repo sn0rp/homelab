@@ -304,74 +304,8 @@ resource "proxmox_virtual_environment_container" "hawkeye" {
   }
 }
 
-resource "proxmox_virtual_environment_container" "ntfy" {
-  node_name     = var.proxmox_node
-  vm_id         = 104
-  description   = "ntfy - LAN notification server (alert path, isolated)"
-  started       = true
-  start_on_boot = true
-  unprivileged  = true
-
-  initialization {
-    hostname = "ntfy.snorp.dev"
-    ip_config {
-      ipv4 {
-        address = "dhcp"
-      }
-    }
-    user_account {
-      password = var.ntfy_root_password
-    }
-  }
-
-  cpu {
-    cores = 1
-  }
-
-  memory {
-    dedicated = 512
-    swap      = 512
-  }
-
-  disk {
-    datastore_id = "local"
-    size         = 4
-  }
-
-  network_interface {
-    name   = "eth0"
-    bridge = "vmbr0"
-  }
-
-  operating_system {
-    template_file_id = "local:vztmpl/debian-13-standard_13.1-2_amd64.tar.zst"
-    type             = "debian"
-  }
-
-  features {
-    nesting = true
-  }
-
-  lifecycle {
-    ignore_changes = [
-      initialization[0].user_account,
-      initialization[0].ip_config,
-      operating_system[0].template_file_id,
-      description,
-      console,
-    ]
-  }
-
-  provisioner "local-exec" {
-    command = <<-EOT
-      sleep 30
-      ansible-playbook -i ${path.module}/../ansible/inventory.yml \
-        ${path.module}/../ansible/site.yml \
-        --limit ntfy \
-        --vault-password-file ${path.module}/../ansible/.vault_pass
-    EOT
-  }
-}
+# ntfy LXC (104) removed 2026-07-10: alerting migrated to Discord webhooks.
+# `terraform apply` after this removal will DESTROY container 104.
 
 resource "proxmox_virtual_environment_vm" "openclaw" {
   node_name = var.proxmox_node

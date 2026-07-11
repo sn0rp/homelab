@@ -35,10 +35,6 @@ all:
           ansible_host: 192.168.8.113
           ansible_user: root
           lxc_id: 103
-        ntfy:
-          ansible_host: 192.168.8.177
-          ansible_user: root
-          lxc_id: 104
 
     router_hosts:
       hosts:
