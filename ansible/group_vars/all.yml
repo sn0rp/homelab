@@ -23,12 +23,15 @@ public_anchors:
 # NOTE: the Spectrum WAN gateway (currently 98.26.78.1) is NOT hardcoded.
 # It is discovered dynamically as the first hop toward 1.1.1.1 (see hawkeye role).
 
-# ntfy topic the phone subscribes to for outage alerts
-ntfy_outage_topic: spectrum-outage
-# ntfy topic for log-based alerts (SSH brute-force, failed systemd units, OOM
-# kills) from the Loki ruler. Separate topic so log noise can be tuned/muted
-# independently of the "internet is down" outage alerts.
-ntfy_logs_topic: homelab-logs
+# --- Alert delivery: Discord webhooks ---
+# MIGRATED OFF ntfy 2026-07-10 (no phone app, works off-network). Alertmanager
+# posts to Discord via native discord_configs. The two webhook URLs live in
+# vault.yml (discord_outage_webhook / discord_logs_webhook) - they are secrets
+# (anyone with the URL can post to the channel), so they are NOT committed here.
+# They may point at the same channel/webhook or two separate ones.
+#
+# The old ntfy_* topic vars are retired. The ntfy LXC/DNS record can stay up
+# harmlessly or be torn down separately; nothing routes to it anymore.
 
 # --- Observability exporters (Proxmox + NAS) ---
 # node_exporter + pve_exporter run on the Proxmox host; graphite_exporter runs

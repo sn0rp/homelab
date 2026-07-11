@@ -3,7 +3,7 @@
 #
 # Components:
 #   - Prometheus            (metrics TSDB + scraper)        :9090
-#   - Alertmanager          (alert routing -> ntfy)         :9093
+#   - Alertmanager          (alert routing -> Discord)      :9093
 #   - blackbox_exporter     (reachability probes)           :9115
 #   - Grafana               (dashboards, LAN-visible)       :3000
 #   - Loki + Promtail       (logs, for the broader homelab goal)  :3100
@@ -166,7 +166,7 @@
     mode: "0644"
   notify: Reload prometheus
 
-- name: Deploy Alertmanager config (routes to ntfy)
+- name: Deploy Alertmanager config (routes to Discord)
   ansible.builtin.template:
     src: alertmanager.yml.j2
     dest: /etc/alertmanager/alertmanager.yml

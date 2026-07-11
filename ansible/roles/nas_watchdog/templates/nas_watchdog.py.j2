@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # Managed by Ansible (nas_watchdog role).
 # Runs on Hawkeye. SSHes to TrueNAS as a low-priv user, calls midclt for ZFS
-# pool health and disk temperatures, and pushes EDGE-TRIGGERED alerts to ntfy.
+# pool health and disk temperatures, and pushes EDGE-TRIGGERED alerts to a
+# Discord webhook (migrated off ntfy 2026-07-10).
 #
 # Covers what the netdata Graphite stream does not: ZFS pool degradation (the
 # loose SATA power cable) and Ironwolf disk temperature.
@@ -18,7 +19,7 @@ import urllib.request
 SSH_USER = "{{ nas_ssh_user }}"
 SSH_HOST = "{{ nas_ssh_host }}"
 SSH_KEY = "{{ nas_ssh_key }}"
-NTFY_URL = "https://ntfy.snorp.dev/{{ nas_ntfy_topic }}"
+DISCORD_WEBHOOK = "{{ nas_discord_webhook }}"
 TEMP_WARN = {{ nas_disk_temp_warn }}
 TEMP_CRIT = {{ nas_disk_temp_crit }}
 STATE_FILE = "{{ nas_watchdog_state }}"
@@ -65,31 +66,38 @@ def save_state(state):
     os.replace(tmp, STATE_FILE)
 
 
-def notify(title, message, priority, tags):
+def notify(title, message, urgent):
+    # Discord webhook embed. Color: red (0xE01E1E) firing / green (0x2ECC71)
+    # resolved. urgent adds an @here-style content ping so a real NAS problem
+    # buzzes even with the channel muted; resolved is quiet.
+    payload = {
+        "content": "@here" if urgent else "",
+        "embeds": [{
+            "title": title,
+            "description": message,
+            "color": 0xE01E1E if urgent else 0x2ECC71,
+        }],
+    }
     req = urllib.request.Request(
-        NTFY_URL,
-        data=message.encode(),
-        headers={
-            "Title": title,
-            "Priority": priority,
-            "Tags": tags,
-        },
+        DISCORD_WEBHOOK,
+        data=json.dumps(payload).encode(),
+        headers={"Content-Type": "application/json"},
         method="POST",
     )
     try:
         urllib.request.urlopen(req, timeout=10)
     except Exception as e:
         # Best effort; log to stderr for journald.
-        print(f"ntfy push failed: {e}", file=sys.stderr)
+        print(f"discord push failed: {e}", file=sys.stderr)
 
 
 def edge(state, key, active, fire_title, fire_msg, clear_title, clear_msg):
     """Fire on rising edge, RESOLVED on falling edge. Returns updated bool."""
     was = state.get(key, False)
     if active and not was:
-        notify(fire_title, fire_msg, "urgent", "rotating_light")
+        notify(fire_title, fire_msg, True)
     elif not active and was:
-        notify(clear_title, clear_msg, "default", "white_check_mark")
+        notify(clear_title, clear_msg, False)
     state[key] = active
 
 

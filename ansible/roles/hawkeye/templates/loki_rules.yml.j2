@@ -1,9 +1,9 @@
 # Managed by Ansible (hawkeye role). Loki ruler LogQL alert rules.
 #
 # Log-based alerts that metrics cannot see, fired to the same Alertmanager that
-# routes Prometheus alerts to ntfy. outage_class=logs routes them to the
-# dedicated homelab-logs ntfy topic, with the summary/description annotations
-# the ntfy webhook template renders.
+# routes Prometheus alerts to Discord. outage_class=logs routes them to the
+# discord-logs receiver, with the summary/description annotations Alertmanager's
+# discord_configs renders into the embed.
 #
 # IMPORTANT - self-trigger guard: Loki's ruler logs every rule evaluation, and
 # that log line contains the full LogQL query text (including the very phrases
@@ -73,6 +73,15 @@ groups:
       # (promtail/loki/etc) - a promtail restart blip logs "promtail.service:
       # Failed with result" and we do not want to page ourselves for the
       # monitoring plumbing recovering.
+      #
+      # ALSO excluded: snapd's firmware-updater notifier oneshots. On a headless
+      # box these run on a snap timer, have no user session/display to notify,
+      # and exit nonzero EVERY cycle - logging ".service: Failed with result"
+      # then leaving no persistent failed state (systemctl --failed is clean).
+      # This was the source of ~98% of the phantom "failed then resolved a
+      # minute later" pages (57 lines/24h, 56 of them this one snap unit).
+      # Confirmed via Loki 2026-07-10. We drop the whole snap.* namespace since
+      # snap oneshots self-recover and are not the kind of failure we act on.
       - alert: SystemdUnitFailed
         expr: |
           sum by (host) (
@@ -82,6 +91,7 @@ groups:
               != "query"
               != "count_over_time"
               !~ `(loki|promtail|alertmanager|prometheus|grafana-server|blackbox_exporter|graphite_exporter)\.service`
+              !~ `snap\.[\w.-]+\.service`
               [5m]
             )
           ) > 0

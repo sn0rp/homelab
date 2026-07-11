@@ -154,7 +154,7 @@
     - name: nas_watchdog.service
       content: |
         [Unit]
-        Description=TrueNAS ZFS health + disk temp watchdog (-> ntfy)
+        Description=TrueNAS ZFS health + disk temp watchdog (-> Discord)
         Wants=network-online.target
         After=network-online.target
         [Service]

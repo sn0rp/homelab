@@ -1,7 +1,7 @@
 ---
 # nas_watchdog: runs on Hawkeye, SSHes to the TrueNAS box as a low-priv user,
 # calls midclt for pool health + disk temps, and pushes edge-triggered alerts
-# to ntfy. Covers the safety-critical NAS signals that the netdata Graphite
+# to a Discord webhook. Covers the safety-critical NAS signals that the netdata Graphite
 # stream does NOT carry: ZFS pool degradation (the loose SATA power cable) and
 # Ironwolf disk temperature.
 
@@ -12,9 +12,10 @@ nas_ssh_user: "hawkeye"
 nas_ssh_host: "{{ nas_ip }}"          # 192.168.8.204 from group_vars
 nas_ssh_key: /root/.ssh/id_ed25519     # reuse Hawkeye's existing key (same as router discovery)
 
-# ntfy topic for NAS hardware health - SEPARATE from spectrum-outage so a
-# degraded mirror is not confused with an ISP outage. Subscribe the phone to it.
-nas_ntfy_topic: "nas-health"
+# Discord webhook for NAS hardware health (migrated off ntfy 2026-07-10). This
+# is a SECRET (anyone with the URL can post) so it lives in vault.yml as
+# nas_discord_webhook, NOT here. May be the same webhook/channel as the
+# alertmanager discord_logs_webhook, or a dedicated NAS-health channel.
 
 # Ironwolf thresholds (Seagate datasheet: >60C not recommended sustained).
 nas_disk_temp_warn: 55

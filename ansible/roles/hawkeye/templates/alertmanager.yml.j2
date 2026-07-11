@@ -1,83 +1,56 @@
 # Managed by Ansible (hawkeye role).
-# Routes outage alerts to the ntfy LAN server. The phone app subscribes to
-# topic "{{ ntfy_outage_topic }}" over WiFi and receives both the firing
-# alert (live, during the outage) and the resolved notice (recovery flush).
+# Routes alerts to Discord via native discord_configs (Alertmanager >= 0.25).
+#
+# MIGRATED OFF ntfy 2026-07-10: ntfy required a phone app and only delivered on
+# the LAN (the phone subscribed over WiFi). Discord webhooks reach you on or off
+# the network with no extra app. Alertmanager's native discord_configs formats
+# the webhook payload itself (title/description/color by firing|resolved), so we
+# no longer need the percent-encoded ntfy template hack that used to live here.
+#
+# Two receivers so outage vs log alerts stay visually distinct and can point at
+# different channels if desired. Webhook URLs come from vault (see vault.yml:
+# discord_outage_webhook / discord_logs_webhook) - never commit them plaintext.
 
 global:
   resolve_timeout: 1m
 
 route:
-  receiver: ntfy-outage
+  receiver: discord-outage
   group_by: ["outage_class"]
   group_wait: 10s
   group_interval: 30s
   # Re-notify every 30m during a sustained outage so you are reminded.
   repeat_interval: 30m
   routes:
-    # Log-based alerts (Loki ruler) -> dedicated homelab-logs topic. MUST come
-    # before the severity=critical route below, since these are also critical;
-    # first-match wins in Alertmanager, so the more specific outage_class match
-    # has to be listed first or log alerts would land on the outage topic.
+    # Log-based alerts (Loki ruler) -> logs receiver. MUST come before the
+    # severity=critical route below, since these are also critical; first-match
+    # wins in Alertmanager, so the more specific outage_class match has to be
+    # listed first or log alerts would land on the outage receiver.
     - matchers:
         - outage_class = "logs"
-      receiver: ntfy-logs
+      receiver: discord-logs
       group_by: ["host", "alertname"]
       # Logs are bursty; don't re-nag as aggressively as an outage.
       repeat_interval: 2h
     - matchers:
         - severity = "critical"
-      receiver: ntfy-outage
+      receiver: discord-outage
 
 receivers:
-  - name: ntfy-outage
-    webhook_configs:
-      # ntfy template mode (tpl=yes): ntfy parses the Alertmanager webhook JSON
-      # body and renders the notification from Go templates in the query params.
-      #   title    <- "OUTAGE: " or "RESOLVED: " + the alert summary, branched on
-      #               .status (firing|resolved) so a recovery is not mistaken
-      #               for a fresh outage
-      #   message  <- the alert description (the "this is/isn't your gear" text)
-      #   priority <- urgent when firing, default when resolved
-      # NOTE: ntfy templates title/message/priority but NOT tags (verified), so
-      # emoji-via-tags does not work here; the OUTAGE/RESOLVED prefix + priority
-      # difference is what distinguishes firing from recovery.
-      #
-      # CRITICAL LESSON (do not reintroduce raw braces): Alertmanager templates
-      # this URL ITSELF, against its own template.Data context, BEFORE sending.
-      # If it sees literal double-brace delimiters it tries to render them and
-      # fails with "can't evaluate field status in type *template.Data",
-      # canceling the send entirely (alert fires in Prometheus, nothing reaches
-      # ntfy). Two template engines (Alertmanager's URL templater and ntfy's
-      # tpl=yes) collide.
-      #
-      # THE FIX: percent-encode the braces (open -> %7B%7B, close -> %7D%7D) in
-      # the committed URL. Alertmanager scans for literal open-brace delimiters,
-      # sees none, and passes the URL through untouched. ntfy then URL-decodes
-      # the %7B%7B back into real braces and does its own templating. Verified
-      # against live ntfy 2026-06-22: renders summary as title, description as
-      # body, HTTP 200.
-      #
-      # Template targets the first alert's annotations: %7B%7B(index .alerts 0)
-      # .annotations.summary%7D%7D etc. send_resolved=true still delivers the
-      # recovery notice. ntfy is behind nginx TLS; hostname matches wildcard cert.
-      - url: "https://ntfy.snorp.dev/{{ ntfy_outage_topic }}?tpl=yes&title=%7B%7Bif%20eq%20.status%20%22firing%22%7D%7DOUTAGE%3A%20%7B%7Belse%7D%7DRESOLVED%3A%20%7B%7Bend%7D%7D%7B%7B%28index%20.alerts%200%29.annotations.summary%7D%7D&message=%7B%7B%28index%20.alerts%200%29.annotations.description%7D%7D&priority=%7B%7Bif%20eq%20.status%20%22firing%22%7D%7Durgent%7B%7Belse%7D%7Ddefault%7B%7Bend%7D%7D"
+  # Outage + infra alerts -> primary alerts channel. title branches firing vs
+  # resolved via the standard Alertmanager template funcs; discord_configs sets
+  # the embed color (red firing / green resolved) automatically.
+  - name: discord-outage
+    discord_configs:
+      - webhook_url: "{{ discord_outage_webhook }}"
         send_resolved: true
-        max_alerts: 0
-        http_config:
-          tls_config:
-            insecure_skip_verify: false
+        title: '{% raw %}{{ if eq .Status "firing" }}🔴 OUTAGE: {{ else }}🟢 RESOLVED: {{ end }}{{ (index .Alerts 0).Annotations.summary }}{% endraw %}'
+        message: '{% raw %}{{ range .Alerts }}{{ .Annotations.description }}{{ "\n" }}{{ end }}{% endraw %}'
 
-  # Log-based alerts (Loki ruler) -> homelab-logs topic. Same percent-encoded
-  # ntfy template trick as ntfy-outage (see the long lesson above: Alertmanager
-  # templates this URL itself, so braces MUST stay percent-encoded or the send
-  # fails). Only the topic and the firing prefix differ: "LOG ALERT:" vs
-  # "RESOLVED:". Default priority (not urgent) - log alerts inform, they are not
-  # the "internet is down" klaxon.
-  - name: ntfy-logs
-    webhook_configs:
-      - url: "https://ntfy.snorp.dev/{{ ntfy_logs_topic }}?tpl=yes&title=%7B%7Bif%20eq%20.status%20%22firing%22%7D%7DLOG%20ALERT%3A%20%7B%7Belse%7D%7DRESOLVED%3A%20%7B%7Bend%7D%7D%7B%7B%28index%20.alerts%200%29.annotations.summary%7D%7D&message=%7B%7B%28index%20.alerts%200%29.annotations.description%7D%7D&priority=%7B%7Bif%20eq%20.status%20%22firing%22%7D%7Dhigh%7B%7Belse%7D%7Ddefault%7B%7Bend%7D%7D"
+  # Log-based alerts (Loki ruler) -> logs channel (may be the same webhook).
+  - name: discord-logs
+    discord_configs:
+      - webhook_url: "{{ discord_logs_webhook }}"
         send_resolved: true
-        max_alerts: 0
-        http_config:
-          tls_config:
-            insecure_skip_verify: false
+        title: '{% raw %}{{ if eq .Status "firing" }}🟠 LOG ALERT: {{ else }}🟢 RESOLVED: {{ end }}{{ (index .Alerts 0).Annotations.summary }}{% endraw %}'
+        message: '{% raw %}{{ range .Alerts }}{{ .Annotations.description }}{{ "\n" }}{{ end }}{% endraw %}'
