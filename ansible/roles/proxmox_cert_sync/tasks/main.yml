@@ -91,6 +91,11 @@
       Description=Pull TLS cert from VPS and push to LXCs
       [Service]
       Type=oneshot
+      # NOTE: every step is chained with && so a failure aborts and the unit
+      # reports exit-code failure honestly. A missing && here (between the
+      # SearXNG reload and the OpenClaw push) is what made this unit fail every
+      # night for a week: `systemctl reload nginx` swallowed the following `ssh`
+      # tokens as arguments and exited nonzero. Fixed 2026-07-10.
       ExecStart=/bin/bash -c '\
         scp root@{{ vps_ip }}:{{ certbot_cert_dir }}/fullchain.pem {{ proxmox_cert_dir }}/ && \
         scp root@{{ vps_ip }}:{{ certbot_cert_dir }}/privkey.pem {{ proxmox_cert_dir }}/ && \
@@ -104,14 +109,14 @@
         cp {{ proxmox_cert_dir }}/fullchain.pem /etc/pve/local/pve-ssl.pem && \
         cp {{ proxmox_cert_dir }}/privkey.pem /etc/pve/local/pve-ssl.key && \
         systemctl restart pveproxy && \
-        pct exec 102 -- mkdir -p /etc/nginx/certs && \
-        pct push 102 {{ proxmox_cert_dir }}/fullchain.pem /etc/nginx/certs/fullchain.pem && \
-        pct push 102 {{ proxmox_cert_dir }}/privkey.pem /etc/nginx/certs/privkey.pem && \
-        pct exec 102 -- systemctl reload nginx \
-        ssh root@192.168.8.140 "mkdir -p /etc/nginx/certs" && \
-        scp /etc/pve/local/certs/fullchain.pem root@192.168.8.140:/etc/nginx/certs/fullchain.pem && \
-        scp /etc/pve/local/certs/privkey.pem root@192.168.8.140:/etc/nginx/certs/privkey.pem && \
-        ssh root@192.168.8.140 "systemctl reload nginx"'
+        pct exec {{ searxng_lxc_id }} -- mkdir -p /etc/nginx/certs && \
+        pct push {{ searxng_lxc_id }} {{ proxmox_cert_dir }}/fullchain.pem /etc/nginx/certs/fullchain.pem && \
+        pct push {{ searxng_lxc_id }} {{ proxmox_cert_dir }}/privkey.pem /etc/nginx/certs/privkey.pem && \
+        pct exec {{ searxng_lxc_id }} -- systemctl reload nginx && \
+        ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new root@{{ openclaw_ip }} "mkdir -p /etc/nginx/certs" && \
+        scp {{ proxmox_cert_dir }}/fullchain.pem root@{{ openclaw_ip }}:/etc/nginx/certs/fullchain.pem && \
+        scp {{ proxmox_cert_dir }}/privkey.pem root@{{ openclaw_ip }}:/etc/nginx/certs/privkey.pem && \
+        ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new root@{{ openclaw_ip }} "systemctl reload nginx"'
   notify: Reload systemd
 
 - name: Install cert-sync systemd timer
