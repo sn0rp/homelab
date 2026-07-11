@@ -70,6 +70,34 @@
     - role: openclaw
       tags: openclaw
 
+# Authorize the OpenClaw box's own key on the rest of the fleet so the agent can
+# run ssh / ansible / terraform against these hosts. This is a dedicated
+# per-host identity (mentor@openclaw.snorp.dev), NOT Benj's personal key, so
+# revoking it just means dropping one line from authorized_keys. Runs against
+# every SSH-reachable host except the openclaw box itself and the dropbear
+# router.
+- name: Authorize OpenClaw agent SSH key on the fleet
+  hosts: vps_hosts:proxmox_hosts:lxc_hosts:!openclaw
+  gather_facts: false
+  tags: openclaw_ssh
+  tasks:
+    - name: Ensure /root/.ssh exists
+      ansible.builtin.file:
+        path: /root/.ssh
+        state: directory
+        mode: '0700'
+        owner: root
+        group: root
+    - name: Add OpenClaw agent key to root authorized_keys
+      ansible.builtin.lineinfile:
+        path: /root/.ssh/authorized_keys
+        line: "{{ openclaw_agent_ssh_pubkey }}"
+        create: yes
+        mode: '0600'
+        owner: root
+        group: root
+        state: present
+
 - name: Hawkeye monitoring LXC
   hosts: hawkeye
   vars_files:

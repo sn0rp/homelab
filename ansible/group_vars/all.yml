@@ -1,4 +1,10 @@
 ---
+# OpenClaw agent's own SSH public key (mentor@openclaw.snorp.dev). Authorized on
+# the fleet by the "openclaw_ssh" play so the agent can run ssh/ansible/terraform.
+# Public key only - safe to keep in plaintext, not vaulted. Revoke by removing
+# this line from each host's authorized_keys.
+openclaw_agent_ssh_pubkey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFkTNwLhJRYimENDF7UQUme/LnxtonUmm3V4mPZWGjxl mentor@openclaw.snorp.dev"
+
 # Domain and network
 base_domain: snorp.dev
 vps_ip: 216.128.143.17

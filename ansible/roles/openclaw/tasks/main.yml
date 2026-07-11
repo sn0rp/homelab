@@ -64,6 +64,30 @@
     HOME: /root
   when: not openclaw_dir.stat.exists
 
+# Memory search dependency: node-llama-cpp provides local embeddings for
+# `openclaw memory search`. It is an OPTIONAL peer dep that the install script
+# does NOT pull in, so without this task memory search silently fails on every
+# rebuild (embeddings unavailable -> keyword-only / disabled). Installed next to
+# the global openclaw package so its runtime resolver finds it.
+- name: Resolve global node_modules path
+  command: npm root -g
+  register: npm_global_root
+  changed_when: false
+
+- name: Check if node-llama-cpp is installed next to openclaw
+  stat:
+    path: "{{ npm_global_root.stdout }}/openclaw/node_modules/node-llama-cpp"
+  register: llama_cpp
+
+- name: Install node-llama-cpp for local memory embeddings
+  command: npm install node-llama-cpp --no-save
+  args:
+    chdir: "{{ npm_global_root.stdout }}/openclaw"
+  environment:
+    HOME: /root
+  when: not llama_cpp.stat.exists
+  changed_when: true
+
 # State restore
 - name: Check if state backup exists on Proxmox host
   stat:
