@@ -82,9 +82,21 @@ groups:
       # minute later" pages (57 lines/24h, 56 of them this one snap unit).
       # Confirmed via Loki 2026-07-10. We drop the whole snap.* namespace since
       # snap oneshots self-recover and are not the kind of failure we act on.
+      # We extract the FAILING unit name from the log TEXT into a
+      # `failed_unit` label and aggregate by it so the alert can actually NAME
+      # what failed instead of "some mystery unit".
+      #
+      # IMPORTANT: we capture into `failed_unit`, NOT `unit`. Promtail already
+      # attaches a `unit` stream label = the journal's _SYSTEMD_UNIT (the unit
+      # that EMITTED the line, which for a systemd status message is systemd
+      # itself, i.e. init.scope). A `| regexp` capture named `unit` will NOT
+      # override that existing stream label, so it would silently report
+      # init.scope. Using a fresh label name sidesteps the collision entirely.
+      # The capture takes the unit token before ".service:" -
+      # e.g. "cert-sync.service: Failed with result 'exit-code'." -> cert-sync.
       - alert: SystemdUnitFailed
         expr: |
-          sum by (host) (
+          sum by (host, failed_unit) (
             count_over_time(
               {job="systemd-journal"}
               |~ `\.service: (Failed with result|Start request repeated too quickly)`
@@ -92,6 +104,7 @@ groups:
               != "count_over_time"
               !~ `(loki|promtail|alertmanager|prometheus|grafana-server|blackbox_exporter|graphite_exporter)\.service`
               !~ `snap\.[\w.-]+\.service`
+              | regexp `(?P<failed_unit>[^\s:]+)\.service: (Failed with result|Start request repeated too quickly)`
               [5m]
             )
           ) > 0
@@ -100,8 +113,8 @@ groups:
           severity: critical
           outage_class: logs
         annotations:
-          summary: "systemd unit failed on {{ '{{' }} $labels.host {{ '}}' }}"
-          description: "A systemd unit entered a failed state on {{ '{{' }} $labels.host {{ '}}' }} in the last 5m. Run 'systemctl --failed' and 'journalctl -p err -b' on that host."
+          summary: "systemd unit failed on {{ '{{' }} $labels.host {{ '}}' }}: {{ '{{' }} $labels.failed_unit {{ '}}' }}.service"
+          description: "Unit {{ '{{' }} $labels.failed_unit {{ '}}' }}.service entered a failed state on {{ '{{' }} $labels.host {{ '}}' }} in the last 5m. Check: systemctl status {{ '{{' }} $labels.failed_unit {{ '}}' }}.service ; journalctl -u {{ '{{' }} $labels.failed_unit {{ '}}' }}.service -b"
 
   # -------------------------------------------------------------------------
   # OOM kills - the silent homelab killer
