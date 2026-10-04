@@ -317,10 +317,17 @@ resource "proxmox_virtual_environment_container" "actualbudget" {
 
   initialization {
     hostname = "finance.snorp.dev"
+    # Static IP: the router (GL.iNet dnsmasq) has no DHCP reservations, so DHCP
+    # leases have been effectively random. Pin the address in the container
+    # config instead of touching the fragile router dnsmasq/rc.local path.
     ip_config {
       ipv4 {
-        address = "dhcp"
+        address = "192.168.8.141/24"
+        gateway = "192.168.8.1"
       }
+    }
+    dns {
+      servers = ["192.168.8.104"]
     }
     user_account {
       password = var.actualbudget_root_password
@@ -342,8 +349,9 @@ resource "proxmox_virtual_environment_container" "actualbudget" {
   }
 
   network_interface {
-    name   = "eth0"
-    bridge = "vmbr0"
+    name        = "eth0"
+    bridge      = "vmbr0"
+    mac_address = "BC:24:11:F1:4A:C1"
   }
 
   operating_system {
@@ -359,7 +367,6 @@ resource "proxmox_virtual_environment_container" "actualbudget" {
   lifecycle {
     ignore_changes = [
       initialization[0].user_account,
-      initialization[0].ip_config,
       operating_system[0].template_file_id,
       description,
       console,
