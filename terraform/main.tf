@@ -322,7 +322,7 @@ resource "proxmox_virtual_environment_container" "actualbudget" {
     # config instead of touching the fragile router dnsmasq/rc.local path.
     ip_config {
       ipv4 {
-        address = "192.168.8.141/24"
+        address = "192.168.8.214/24"
         gateway = "192.168.8.1"
       }
     }
@@ -351,7 +351,7 @@ resource "proxmox_virtual_environment_container" "actualbudget" {
   network_interface {
     name        = "eth0"
     bridge      = "vmbr0"
-    mac_address = "BC:24:11:F1:4A:C1"
+    mac_address = "BC:24:11:CD:5F:FD"
   }
 
   operating_system {

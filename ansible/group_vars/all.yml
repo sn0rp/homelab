@@ -17,7 +17,7 @@ provisioning_ip: 192.168.8.180
 searxng_ip: 192.168.8.139
 openclaw_ip: 192.168.8.140
 hawkeye_ip: 192.168.8.113
-actualbudget_ip: 192.168.8.141
+actualbudget_ip: 192.168.8.214
 
 # --- Outage monitor / ISP probe targets ---
 # router LAN gateway (internal-alive anchor) - genuinely static
