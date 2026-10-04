@@ -35,6 +35,10 @@ all:
           ansible_host: 192.168.8.113
           ansible_user: root
           lxc_id: 103
+        actualbudget:
+          ansible_host: 192.168.8.141
+          ansible_user: root
+          lxc_id: 104
 
     router_hosts:
       hosts:

@@ -12,6 +12,7 @@ PROV_PASS     = $(call vault_var,provisioning_root_password)
 SEARXNG_PASS  = $(call vault_var,searxng_root_password)
 OPENCLAW_PASS = $(call vault_var,openclaw_root_password)
 HAWKEYE_PASS  = $(call vault_var,hawkeye_root_password)
+ACTUAL_PASS   = $(call vault_var,actualbudget_root_password)
 
 TF_FLAGS = \
   -var="proxmox_token_secret=$(TOKEN_SECRET)" \
@@ -19,7 +20,8 @@ TF_FLAGS = \
   -var="provisioning_root_password=$(PROV_PASS)" \
   -var="searxng_root_password=$(SEARXNG_PASS)" \
   -var="openclaw_root_password=$(OPENCLAW_PASS)" \
-  -var="hawkeye_root_password=$(HAWKEYE_PASS)"
+  -var="hawkeye_root_password=$(HAWKEYE_PASS)" \
+  -var="actualbudget_root_password=$(ACTUAL_PASS)"
 
 help:
 	@echo "homelab IaC"

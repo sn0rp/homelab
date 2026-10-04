@@ -1,0 +1,89 @@
+---
+# Actual Budget runs on port 5006 inside the LXC (installed by the
+# community-scripts ct/actualbudget.sh as a systemd unit `actualbudget`).
+# This role only manages the service state + an nginx TLS reverse proxy on
+# finance.snorp.dev, exactly like the searxng role. The app itself is
+# installed by the community script (bare-metal recovery) or the PXE firstboot.
+
+- name: Wait for Actual Budget to be reachable
+  uri:
+    url: "http://{{ ansible_host }}:{{ actualbudget_port }}/"
+    status_code: [200, 302, 404]
+  register: result
+  until: result.status in [200, 302, 404]
+  retries: 12
+  delay: 10
+
+- name: Ensure Actual Budget service is enabled and started
+  systemd:
+    name: actualbudget
+    enabled: yes
+    state: started
+
+- name: Install nginx
+  apt:
+    name: nginx
+    state: present
+    update_cache: yes
+
+- name: Create cert directory
+  file:
+    path: /etc/nginx/certs
+    state: directory
+
+- name: Copy wildcard cert into the Actual Budget LXC
+  command: "{{ item }}"
+  loop:
+    - pct push {{ actualbudget_lxc_id }} /etc/pve/local/certs/fullchain.pem /etc/nginx/certs/fullchain.pem
+    - pct push {{ actualbudget_lxc_id }} /etc/pve/local/certs/privkey.pem /etc/nginx/certs/privkey.pem
+  delegate_to: proxmox
+
+- name: Configure nginx reverse proxy for Actual Budget (HTTP -> HTTPS + proxy)
+  copy:
+    dest: /etc/nginx/sites-available/actualbudget
+    content: |
+      server {
+          listen 80 default_server;
+          server_name finance.snorp.dev;
+          return 301 https://$host$request_uri;
+      }
+      server {
+          listen 443 ssl default_server;
+          server_name finance.snorp.dev;
+          ssl_certificate /etc/nginx/certs/fullchain.pem;
+          ssl_certificate_key /etc/nginx/certs/privkey.pem;
+
+          # Actual's sync + file upload can be large; lift nginx's default 1m cap.
+          client_max_body_size 100M;
+
+          location / {
+              proxy_pass http://127.0.0.1:{{ actualbudget_port }};
+              proxy_http_version 1.1;
+              proxy_set_header Upgrade $http_upgrade;
+              proxy_set_header Connection "upgrade";
+              proxy_set_header Host $host;
+              proxy_set_header X-Real-IP $remote_addr;
+              proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+              proxy_set_header X-Forwarded-Proto $scheme;
+          }
+      }
+  notify: Reload nginx
+
+- name: Enable nginx site
+  file:
+    src: /etc/nginx/sites-available/actualbudget
+    dest: /etc/nginx/sites-enabled/actualbudget
+    state: link
+  notify: Reload nginx
+
+- name: Remove nginx default site
+  file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+  notify: Reload nginx
+
+- name: Ensure nginx is enabled and started
+  systemd:
+    name: nginx
+    enabled: yes
+    state: started

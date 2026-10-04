@@ -17,6 +17,7 @@ provisioning_ip: 192.168.8.180
 searxng_ip: 192.168.8.139
 openclaw_ip: 192.168.8.140
 hawkeye_ip: 192.168.8.113
+actualbudget_ip: 192.168.8.141
 
 # --- Outage monitor / ISP probe targets ---
 # router LAN gateway (internal-alive anchor) - genuinely static
@@ -45,9 +46,11 @@ pve_exporter_user: "monitoring@pve"
 pve_exporter_token_name: "exporter"
 # pve_exporter_token_secret is supplied via vault.yml (created on first run).
 searxng_port: 8888
+actualbudget_port: 5006
 technitium_lxc_id: 100
 provisioning_lxc_id: 101
 searxng_lxc_id: 102
+actualbudget_lxc_id: 104
 
 openclaw_searxng_url: "http://searx.snorp.dev:8888"
 
@@ -70,6 +73,7 @@ technitium_dns_records:
   - { name: "openclaw",     type: A, value: "{{ openclaw_ip }}" }
   - { name: "nas",          type: A, value: "{{ nas_ip }}" }
   - { name: "hawkeye",      type: A, value: "{{ hawkeye_ip }}" }
+  - { name: "finance",      type: A, value: "{{ actualbudget_ip }}" }
 
 technitium_forwarders:
   - https://cloudflare-dns.com/dns-query

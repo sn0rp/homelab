@@ -108,6 +108,15 @@
     - role: nas_watchdog
       tags: hawkeye, nas_watchdog, monitoring
 
+- name: Actual Budget LXC
+  hosts: actualbudget
+  gather_facts: true
+  vars_files:
+    - vault.yml
+  roles:
+    - role: actualbudget
+      tags: actualbudget
+
 # ---------------------------------------------------------------------------
 # Log shipping: promtail on every host that produces logs worth keeping.
 # Loki + Grafana's Loki datasource live in the hawkeye role above; this is the
@@ -117,7 +126,7 @@
 # above. TrueNAS is intentionally excluded (it pushes Graphite metrics; its
 # logs add little here).
 - name: Log shippers - LXCs + OpenClaw VM + Hawkeye
-  hosts: technitium:provisioning:searxng:openclaw:hawkeye
+  hosts: technitium:provisioning:searxng:openclaw:hawkeye:actualbudget
   vars_files:
     - vault.yml
   roles:

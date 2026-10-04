@@ -39,3 +39,8 @@ variable "hawkeye_root_password" {
   description = "Root password for Hawkeye monitoring LXC"
   sensitive   = true
 }
+
+variable "actualbudget_root_password" {
+  description = "Root password for Actual Budget LXC"
+  sensitive   = true
+}
