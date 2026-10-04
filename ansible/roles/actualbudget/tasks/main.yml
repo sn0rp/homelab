@@ -5,6 +5,32 @@
 # finance.snorp.dev, exactly like the searxng role. The app itself is
 # installed by the community script (bare-metal recovery) or the PXE firstboot.
 
+# The community script enables HTTPS inside Actual itself (an `https` block in
+# config.json with a self-signed cert), so the app speaks TLS on 5006. In our
+# design nginx is the sole TLS terminator and must proxy plain HTTP to the
+# backend, so we strip the `https` block and let Actual serve plaintext on
+# localhost. Without this, nginx->app is HTTP-to-a-TLS-socket => 502.
+- name: Disable Actual's built-in HTTPS (nginx terminates TLS instead)
+  copy:
+    dest: /opt/actualbudget-data/config.json
+    content: |
+      {
+        "port": {{ actualbudget_port }},
+        "hostname": "127.0.0.1",
+        "serverFiles": "/opt/actualbudget-data/server-files",
+        "userFiles": "/opt/actualbudget-data/user-files",
+        "trustedProxies": [
+          "127.0.0.0/8",
+          "::1/128"
+        ]
+      }
+    backup: yes
+  notify: Restart actualbudget
+
+# Apply the config change now so the port check below sees the HTTP listener.
+- name: Flush handlers (restart Actual before health check)
+  meta: flush_handlers
+
 # Actual's sync-server returns an empty reply to a bare `GET /` (it only
 # answers real browser requests / its API routes), so an HTTP status probe
 # gives a false negative. Gate on the TCP port being open instead - that is
