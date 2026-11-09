@@ -1,0 +1,4 @@
+---
+- name: Reload systemd (cert_pull)
+  systemd:
+    daemon_reload: yes

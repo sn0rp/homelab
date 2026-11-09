@@ -69,6 +69,10 @@
   roles:
     - role: openclaw
       tags: openclaw
+    # Self-service cert: the agent box pulls its own wildcard from the issuer
+    # rather than accepting an inbound push, so the hypervisor stays out of it.
+    - role: cert_pull
+      tags: cert, cert_pull
 
 # Authorize the OpenClaw box's own key on the rest of the fleet so the agent can
 # run ssh / ansible / terraform against these hosts. This is a dedicated

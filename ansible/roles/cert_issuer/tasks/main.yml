@@ -55,12 +55,18 @@
     -d "*.{{ base_domain }}"
   when: '"*." + base_domain not in certbot_output.stdout'
 
-# certbot installs its own systemd renewal timer (certbot.timer) on Debian, so
-# renewal is automatic. We make renewed certs world-triggerable by proxmox's
-# cert-sync timer, which pulls on its own daily schedule - no deploy hook needed
-# because the sync is pull-based, not push-based from here.
+# certbot ships its own systemd renewal timer (certbot.timer) on Debian, so
+# renewal is automatic. Renewed certs are picked up by proxmox's cert-sync timer
+# on its own daily schedule - the sync is pull-based, so no deploy hook is needed
+# here. We enable the timer only if the unit is actually present: in --check mode
+# the package install is simulated, so the unit file may not exist yet, and we
+# must not hard-fail on that.
+- name: Discover systemd units
+  service_facts:
+
 - name: Ensure certbot renewal timer is enabled
   systemd:
     name: certbot.timer
     enabled: yes
     state: started
+  when: "'certbot.timer' in ansible_facts.services"

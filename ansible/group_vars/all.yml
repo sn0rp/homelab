@@ -103,11 +103,22 @@ cert_distribution_targets:
       fullchain: /etc/nginx/certs/fullchain.pem,
       privkey: /etc/nginx/certs/privkey.pem,
       reload: "systemctl reload nginx" }
-  - { name: "openclaw", kind: ssh, host: "{{ openclaw_ip }}", ssh_user: root,
-      dir: /etc/nginx/certs,
-      fullchain: /etc/nginx/certs/fullchain.pem,
-      privkey: /etc/nginx/certs/privkey.pem,
-      reload: "systemctl reload nginx" }
+  # NOTE: the OpenClaw box is intentionally NOT a push target here. It is the
+  # agent host, so we keep the hypervisor out of it - instead it self-serves via
+  # the cert_pull role (it SSHes the issuer and pulls its own cert). See the
+  # "OpenClaw VM - self-service cert pull" play in site.yml.
+
+# --- cert_pull: hosts that pull their own cert from the issuer ----------------
+# For hosts that should not accept an inbound push (the agent box). They SSH the
+# issuer directly. Defaults target the OpenClaw box's nginx.
+cert_pull_issuer_host: "{{ technitium_ip }}"
+cert_pull_issuer_user: root
+cert_pull_dir: /etc/nginx/certs
+cert_pull_fullchain: /etc/nginx/certs/fullchain.pem
+cert_pull_privkey: /etc/nginx/certs/privkey.pem
+cert_pull_owner: root
+cert_pull_group: root
+cert_pull_reload: "systemctl reload nginx"
 
 # Technitium
 # NOTE: @ / www / * used to point at the (now-destroyed) VPS. There is no public

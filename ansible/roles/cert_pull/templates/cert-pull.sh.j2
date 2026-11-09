@@ -1,0 +1,50 @@
+#!/bin/bash
+# MANAGED BY ANSIBLE (roles/cert_pull). Do not edit by hand.
+#
+# Self-service cert sync for a host that can SSH the issuer directly but should
+# NOT be an inbound push target (e.g. the OpenClaw agent box: we keep the
+# hypervisor out of it). Pulls the snorp.dev wildcard from the issuer over the
+# LAN and reloads the local service. Exits nonzero on any failure so Hawkeye
+# alerts honestly.
+set -uo pipefail
+
+ISSUER_HOST="{{ cert_pull_issuer_host }}"
+ISSUER_USER="{{ cert_pull_issuer_user | default('root') }}"
+ISSUER_CERT_DIR="{{ certbot_cert_dir }}"
+DEST_DIR="{{ cert_pull_dir }}"
+DEST_FULLCHAIN="{{ cert_pull_fullchain }}"
+DEST_PRIVKEY="{{ cert_pull_privkey }}"
+OWNER="{{ cert_pull_owner | default('root') }}"
+GROUP="{{ cert_pull_group | default('root') }}"
+RELOAD="{{ cert_pull_reload }}"
+
+SSH_OPTS="-o BatchMode=yes -o ConnectTimeout=8 -o StrictHostKeyChecking=accept-new"
+
+log() { echo "[cert-pull] $*"; }
+
+mkdir -p "$DEST_DIR"
+TMP=$(mktemp -d)
+trap 'rm -rf "$TMP"' EXIT
+
+log "pulling wildcard from issuer $ISSUER_USER@$ISSUER_HOST"
+if ! scp $SSH_OPTS "$ISSUER_USER@$ISSUER_HOST:$ISSUER_CERT_DIR/fullchain.pem" "$TMP/fullchain.pem" \
+   || ! scp $SSH_OPTS "$ISSUER_USER@$ISSUER_HOST:$ISSUER_CERT_DIR/privkey.pem" "$TMP/privkey.pem"; then
+  echo "[cert-pull] FATAL: could not pull cert from issuer" >&2
+  exit 1
+fi
+
+# Only replace if the pulled cert differs, so we don't reload nginx needlessly.
+if cmp -s "$TMP/fullchain.pem" "$DEST_FULLCHAIN" && cmp -s "$TMP/privkey.pem" "$DEST_PRIVKEY"; then
+  log "cert unchanged; nothing to do"
+  exit 0
+fi
+
+install -o "$OWNER" -g "$GROUP" -m 0640 "$TMP/fullchain.pem" "$DEST_FULLCHAIN"
+install -o "$OWNER" -g "$GROUP" -m 0640 "$TMP/privkey.pem" "$DEST_PRIVKEY"
+
+log "cert updated; reloading"
+if ! $RELOAD; then
+  echo "[cert-pull] FATAL: reload failed" >&2
+  exit 1
+fi
+log "done"

@@ -1,0 +1,53 @@
+---
+# cert_pull: self-service wildcard sync for a host that SSHes the issuer directly
+# instead of being an inbound push target. Used by the OpenClaw box so the
+# hypervisor never needs a key into the agent host. Installs a script + daily
+# timer that pulls the cert from the issuer and reloads the local service.
+
+- name: Render cert-pull script
+  template:
+    src: cert-pull.sh.j2
+    dest: /usr/local/sbin/cert-pull.sh
+    mode: "0750"
+    owner: root
+    group: root
+  notify: Reload systemd (cert_pull)
+
+- name: Install cert-pull systemd service
+  copy:
+    dest: /etc/systemd/system/cert-pull.service
+    content: |
+      [Unit]
+      Description=Pull TLS wildcard from the issuer and reload local service
+      Wants=network-online.target
+      After=network-online.target
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/sbin/cert-pull.sh
+  notify: Reload systemd (cert_pull)
+
+- name: Install cert-pull systemd timer
+  copy:
+    dest: /etc/systemd/system/cert-pull.timer
+    content: |
+      [Unit]
+      Description=Daily cert pull from the issuer
+      [Timer]
+      OnCalendar=daily
+      Persistent=true
+      RandomizedDelaySec=300
+      [Install]
+      WantedBy=timers.target
+  notify: Reload systemd (cert_pull)
+
+# daemon_reload so the freshly-written unit is visible, then enable+start. In
+# --check mode the unit file is only simulated, so skip the enable there to avoid
+# a spurious "Could not find the requested service" failure; a real run writes
+# the file in the copy task above before this runs.
+- name: Enable cert-pull timer
+  systemd:
+    name: cert-pull.timer
+    enabled: yes
+    state: started
+    daemon_reload: yes
+  when: not ansible_check_mode

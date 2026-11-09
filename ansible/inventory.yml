@@ -28,6 +28,9 @@ all:
           ansible_host: 192.168.8.140
           ansible_user: root
           lxc_id: 200
+          # The ansible controller IS the openclaw box, so manage it over a local
+          # connection instead of SSHing into ourselves (no inbound key needed).
+          ansible_connection: local
         hawkeye:
           ansible_host: 192.168.8.113
           ansible_user: root
