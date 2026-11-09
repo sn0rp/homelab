@@ -1,0 +1,66 @@
+---
+# cert_issuer: obtains and renews the snorp.dev wildcard via Let's Encrypt
+# DNS-01 (Cloudflare). DNS-01 needs no inbound ports and no public IP - only
+# outbound HTTPS to the Cloudflare API - so this role can run on ANY host that
+# can reach Cloudflare. It currently runs on the Technitium LXC (our DNS box):
+# the host that answers for snorp.dev is the host that proves it owns snorp.dev.
+#
+# Downstream, proxmox_cert_sync pulls this cert off the issuer and fans it out
+# to every consumer (see cert_distribution_targets in group_vars/all.yml).
+
+- name: Install certbot and Cloudflare DNS plugin
+  apt:
+    name:
+      - certbot
+      - python3-certbot-dns-cloudflare
+    state: present
+    update_cache: yes
+
+- name: Check if Cloudflare credentials file exists
+  stat:
+    path: "{{ cloudflare_ini_path }}"
+  register: cf_ini
+
+- name: Fail if Cloudflare credentials file is missing
+  fail:
+    msg: >
+      Cloudflare API token file not found at {{ cloudflare_ini_path }}.
+      Create it manually on {{ inventory_hostname }}:
+      echo 'dns_cloudflare_api_token = TOKEN' > {{ cloudflare_ini_path }} && chmod 600 {{ cloudflare_ini_path }}
+  when: not cf_ini.stat.exists
+
+- name: Lock down Cloudflare credentials file
+  file:
+    path: "{{ cloudflare_ini_path }}"
+    mode: "0600"
+    owner: root
+    group: root
+  when: cf_ini.stat.exists
+
+- name: Check existing certificates
+  command: certbot certificates
+  register: certbot_output
+  changed_when: false
+
+- name: Obtain wildcard cert if not already present
+  command: >
+    certbot certonly
+    --dns-cloudflare
+    --dns-cloudflare-credentials {{ cloudflare_ini_path }}
+    --cert-name {{ certbot_cert_name }}
+    --non-interactive
+    --agree-tos
+    --email hostadmin@{{ base_domain }}
+    -d "{{ base_domain }}"
+    -d "*.{{ base_domain }}"
+  when: '"*." + base_domain not in certbot_output.stdout'
+
+# certbot installs its own systemd renewal timer (certbot.timer) on Debian, so
+# renewal is automatic. We make renewed certs world-triggerable by proxmox's
+# cert-sync timer, which pulls on its own daily schedule - no deploy hook needed
+# because the sync is pull-based, not push-based from here.
+- name: Ensure certbot renewal timer is enabled
+  systemd:
+    name: certbot.timer
+    enabled: yes
+    state: started

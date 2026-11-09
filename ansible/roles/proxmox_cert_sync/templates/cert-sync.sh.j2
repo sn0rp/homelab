@@ -1,0 +1,75 @@
+#!/bin/bash
+# MANAGED BY ANSIBLE (roles/proxmox_cert_sync). Do not edit by hand.
+#
+# Pulls the snorp.dev wildcard off the issuer LXC and distributes it to every
+# consumer declared in cert_distribution_targets. Each target failure is logged
+# and remembered, but the script keeps going so one dead host does not block the
+# rest. It exits nonzero if ANY target failed, so Hawkeye still alerts on a real
+# problem - just with an attributable message instead of a silent 135s hang.
+set -uo pipefail
+
+ISSUER_LXC_ID="{{ cert_issuer_lxc_id }}"
+ISSUER_CERT_DIR="{{ certbot_cert_dir }}"
+STAGE="{{ proxmox_cert_dir }}"
+FULLCHAIN="$STAGE/fullchain.pem"
+PRIVKEY="$STAGE/privkey.pem"
+
+SSH_OPTS="-o BatchMode=yes -o ConnectTimeout=8 -o StrictHostKeyChecking=accept-new"
+SCP_OPTS="-o BatchMode=yes -o ConnectTimeout=8 -o StrictHostKeyChecking=accept-new"
+
+failed=""
+fail_count=0
+
+log()  { echo "[cert-sync] $*"; }
+fail() { echo "[cert-sync] FAIL: $*" >&2; failed="$failed $1"; fail_count=$((fail_count + 1)); }
+
+# --- 1. Pull the fresh cert off the issuer over the LAN (no internet) ---------
+log "pulling wildcard from issuer LXC $ISSUER_LXC_ID"
+if ! pct pull "$ISSUER_LXC_ID" "$ISSUER_CERT_DIR/fullchain.pem" "$FULLCHAIN" 2>/dev/null \
+   || ! pct pull "$ISSUER_LXC_ID" "$ISSUER_CERT_DIR/privkey.pem" "$PRIVKEY" 2>/dev/null; then
+  echo "[cert-sync] FATAL: could not pull cert from issuer LXC $ISSUER_LXC_ID" >&2
+  exit 1
+fi
+chmod 600 "$PRIVKEY"
+
+# --- 2. Build the PKCS12 bundle once (some consumers want .pfx) ---------------
+PFX=/tmp/wildcard.pfx
+openssl pkcs12 -export -out "$PFX" -inkey "$PRIVKEY" -in "$FULLCHAIN" -passout pass: 2>/dev/null \
+  || log "WARN: pfx build failed (only matters for pfx-type targets)"
+
+# --- 3. Fan out to every declared target -------------------------------------
+# Each target is dispatched by 'kind':
+#   local  - cp into a path on this proxmox host, then run reload
+#   lxc    - pct push into an LXC (by id), then pct exec the reload
+#   ssh    - scp to a remote host (LAN LXC or a future VPS), then ssh the reload
+#   pfx    - pct push the PKCS12 bundle into an LXC, then pct exec the reload
+{% for t in cert_distribution_targets %}
+
+# ---- target: {{ t.name }} ({{ t.kind }}) ----
+log "distributing to {{ t.name }}"
+{% if t.kind == 'local' %}
+if cp "$FULLCHAIN" "{{ t.fullchain }}" && cp "$PRIVKEY" "{{ t.privkey }}" \
+   && {{ t.reload }}; then log "{{ t.name }} ok"; else fail "{{ t.name }}"; fi
+{% elif t.kind == 'lxc' %}
+if pct exec {{ t.lxc_id }} -- mkdir -p "{{ t.dir }}" \
+   && pct push {{ t.lxc_id }} "$FULLCHAIN" "{{ t.fullchain }}" \
+   && pct push {{ t.lxc_id }} "$PRIVKEY" "{{ t.privkey }}" \
+   && pct exec {{ t.lxc_id }} -- {{ t.reload }}; then log "{{ t.name }} ok"; else fail "{{ t.name }}"; fi
+{% elif t.kind == 'pfx' %}
+if pct push {{ t.lxc_id }} "$PFX" "{{ t.pfx }}" \
+   && pct exec {{ t.lxc_id }} -- {{ t.reload }}; then log "{{ t.name }} ok"; else fail "{{ t.name }}"; fi
+{% elif t.kind == 'ssh' %}
+if ssh $SSH_OPTS {{ t.ssh_user | default('root') }}@{{ t.host }} "mkdir -p {{ t.dir }}" \
+   && scp $SCP_OPTS "$FULLCHAIN" {{ t.ssh_user | default('root') }}@{{ t.host }}:"{{ t.fullchain }}" \
+   && scp $SCP_OPTS "$PRIVKEY" {{ t.ssh_user | default('root') }}@{{ t.host }}:"{{ t.privkey }}" \
+   && ssh $SSH_OPTS {{ t.ssh_user | default('root') }}@{{ t.host }} "{{ t.reload }}"; then log "{{ t.name }} ok"; else fail "{{ t.name }}"; fi
+{% endif %}
+{% endfor %}
+
+# --- 4. Report ----------------------------------------------------------------
+rm -f "$PFX"
+if [ "$fail_count" -ne 0 ]; then
+  echo "[cert-sync] completed with failures:$failed" >&2
+  exit 1
+fi
+log "all targets updated successfully"

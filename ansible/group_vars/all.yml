@@ -7,7 +7,9 @@ openclaw_agent_ssh_pubkey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFkTNwLhJRYimEND
 
 # Domain and network
 base_domain: snorp.dev
-vps_ip: 216.128.143.17
+# vps_ip: 216.128.143.17  # RETIRED Nov 2026 - VPS destroyed (compromised). No
+# homelab function depends on a VPS now; the wildcard is issued locally on
+# Technitium via DNS-01. Re-add when a future VPS comes online.
 technitium_ip: 192.168.8.104
 proxmox_ip: 192.168.8.187
 nas_ip: 192.168.8.204
@@ -54,18 +56,68 @@ actualbudget_lxc_id: 104
 
 openclaw_searxng_url: "http://searx.snorp.dev:8888"
 
-# Cert paths
+# --- TLS wildcard: issuance + distribution -----------------------------------
+# One wildcard (*.snorp.dev + snorp.dev) is issued ONCE on the issuer host via
+# Let's Encrypt DNS-01 (Cloudflare), then fanned out to every consumer by the
+# proxmox cert-sync unit. DNS-01 needs no inbound ports, so the issuer can be
+# any host that reaches the Cloudflare API - we use the Technitium LXC (our DNS
+# box). The VPS that used to do this was destroyed Nov 2026; nothing here needs
+# a VPS anymore.
 certbot_cert_name: snorp.dev-0001
 certbot_cert_dir: "/etc/letsencrypt/live/{{ certbot_cert_name }}"
 cloudflare_ini_path: /root/.cloudflare.ini
 proxmox_cert_dir: /etc/pve/local/certs
 technitium_pfx_path: /etc/technitium/technitium.pfx
 
+# Which host issues/renews the cert. Technitium LXC = our DNS box.
+cert_issuer_lxc_id: "{{ technitium_lxc_id }}"
+
+# Every HTTPS consumer of the wildcard. The cert-sync script loops over this, so
+# adding a site is a ONE-LINE entry here - no new role, no new ACME account.
+#
+# kind:
+#   local - cp into a path on the proxmox host itself, then run reload
+#   lxc   - pct push PEMs into an LXC (by id), then pct exec reload
+#   pfx   - pct push the PKCS12 bundle into an LXC, then pct exec reload
+#   ssh   - scp PEMs to a remote host (LAN or a future VPS), then ssh reload
+#
+# FUTURE VPS: when you stand one up for a personal site, give it HTTPS on this
+# same wildcard by adding one entry, e.g.:
+#   - { name: "mysite-vps", kind: ssh, host: "203.0.113.10", ssh_user: root,
+#       dir: /etc/nginx/certs,
+#       fullchain: /etc/nginx/certs/fullchain.pem,
+#       privkey: /etc/nginx/certs/privkey.pem,
+#       reload: "systemctl reload nginx" }
+# Prereqs for an ssh target: proxmox's root key is authorized on it, and its
+# firewall allows SSH from the proxmox WAN egress. That's it.
+cert_distribution_targets:
+  - { name: "technitium", kind: pfx, lxc_id: "{{ technitium_lxc_id }}",
+      pfx: "{{ technitium_pfx_path }}",
+      reload: "systemctl restart technitium" }
+  - { name: "proxmox-ui", kind: local,
+      fullchain: /etc/pve/local/pve-ssl.pem,
+      privkey: /etc/pve/local/pve-ssl.key,
+      reload: "systemctl restart pveproxy" }
+  - { name: "searxng", kind: lxc, lxc_id: "{{ searxng_lxc_id }}",
+      dir: /etc/nginx/certs,
+      fullchain: /etc/nginx/certs/fullchain.pem,
+      privkey: /etc/nginx/certs/privkey.pem,
+      reload: "systemctl reload nginx" }
+  - { name: "openclaw", kind: ssh, host: "{{ openclaw_ip }}", ssh_user: root,
+      dir: /etc/nginx/certs,
+      fullchain: /etc/nginx/certs/fullchain.pem,
+      privkey: /etc/nginx/certs/privkey.pem,
+      reload: "systemctl reload nginx" }
+
 # Technitium
+# NOTE: @ / www / * used to point at the (now-destroyed) VPS. There is no public
+# apex/www site yet, so they resolve to proxmox on the LAN just so the wildcard
+# points somewhere real. When a future VPS hosts the public site, repoint @/www
+# (and optionally *) at that VPS's public IP - one edit here.
 technitium_dns_records:
-  - { name: "@",            type: A, value: "{{ vps_ip }}" }
-  - { name: "www",          type: A, value: "{{ vps_ip }}" }
-  - { name: "*",            type: A, value: "{{ vps_ip }}" }
+  - { name: "@",            type: A, value: "{{ proxmox_ip }}" }
+  - { name: "www",          type: A, value: "{{ proxmox_ip }}" }
+  - { name: "*",            type: A, value: "{{ proxmox_ip }}" }
   - { name: "technitium",   type: A, value: "{{ technitium_ip }}" }
   - { name: "proxmox",      type: A, value: "{{ proxmox_ip }}" }
   - { name: "provisioning", type: A, value: "{{ provisioning_ip }}" }

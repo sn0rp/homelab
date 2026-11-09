@@ -1,12 +1,9 @@
 # ansible/inventory.yml
 all:
   children:
-    vps_hosts:
-      hosts:
-        jobert:
-          ansible_host: 216.128.143.17
-          ansible_user: root
-
+    # vps_hosts retired Nov 2026 - the jobert VPS (216.128.143.17) was destroyed
+    # after a compromise. The wildcard cert is now issued locally on Technitium
+    # via DNS-01. Re-add a vps_hosts group when a future VPS comes online.
     proxmox_hosts:
       hosts:
         proxmox:

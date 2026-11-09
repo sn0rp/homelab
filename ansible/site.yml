@@ -1,12 +1,12 @@
 # ansible/site.yml
 ---
-- name: VPS - wildcard cert
-  hosts: vps_hosts
+- name: Cert issuer - wildcard cert via DNS-01 (runs on Technitium LXC)
+  hosts: technitium
   vars_files:
     - vault.yml
   roles:
-    - role: vps_cert
-      tags: cert, vps
+    - role: cert_issuer
+      tags: cert, issuer
 
 - name: Proxmox host - cert sync
   hosts: proxmox_hosts
@@ -77,7 +77,7 @@
 # every SSH-reachable host except the openclaw box itself and the dropbear
 # router.
 - name: Authorize OpenClaw agent SSH key on the fleet
-  hosts: vps_hosts:proxmox_hosts:lxc_hosts:!openclaw
+  hosts: proxmox_hosts:lxc_hosts:!openclaw
   gather_facts: false
   tags: openclaw_ssh
   tasks:
