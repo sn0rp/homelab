@@ -17,11 +17,20 @@
 # orchestrator because it already has `pct` access to the LXCs and holds the
 # pve-ssl cert itself.
 
-- name: Ensure cert staging dir exists on proxmox
-  file:
+# NOTE: proxmox_cert_dir lives under /etc/pve/local, which is the pmxcfs FUSE
+# filesystem. It rejects chmod and arbitrary mkdir ("Operation not permitted"),
+# so we must NOT manage mode here and must create it only if genuinely absent.
+# The dir already exists on the live host (created May 2026); this stat+command
+# pattern is idempotent and pmxcfs-safe.
+- name: Check cert staging dir on proxmox
+  stat:
     path: "{{ proxmox_cert_dir }}"
-    state: directory
-    mode: "0700"
+  register: pve_cert_dir
+
+- name: Create cert staging dir on proxmox (pmxcfs-safe, no chmod)
+  command: "mkdir -p {{ proxmox_cert_dir }}"
+  when: not pve_cert_dir.stat.exists
+  changed_when: true
 
 - name: Render cert distribution script
   template:

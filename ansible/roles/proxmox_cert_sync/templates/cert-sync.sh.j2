@@ -30,7 +30,10 @@ if ! pct pull "$ISSUER_LXC_ID" "$ISSUER_CERT_DIR/fullchain.pem" "$FULLCHAIN" 2>/
   echo "[cert-sync] FATAL: could not pull cert from issuer LXC $ISSUER_LXC_ID" >&2
   exit 1
 fi
-chmod 600 "$PRIVKEY"
+# $PRIVKEY is staged under /etc/pve/local (pmxcfs FUSE), which refuses chmod.
+# The file already lands as root:www-data 0640 there, which is fine, so tolerate
+# the refusal instead of emitting a spurious error into a success path.
+chmod 600 "$PRIVKEY" 2>/dev/null || true
 
 # --- 2. Build the PKCS12 bundle once (some consumers want .pfx) ---------------
 PFX=/tmp/wildcard.pfx
